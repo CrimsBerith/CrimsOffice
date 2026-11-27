@@ -1,6 +1,7 @@
 ---
 name: swift-audit
 description: Deep macOS/iOS SwiftUI, Concurrency (@MainActor/Sendable), and memory leak audit skill.
+triggers: [swift, swiftui, ios, macos, audit, concurrency, memory, leak]
 ---
 # Swift & Apple HIG Audit
 1. Verify `@MainActor` isolation on ObservableObject mutations.

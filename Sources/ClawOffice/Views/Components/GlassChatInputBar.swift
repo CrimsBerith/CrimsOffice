@@ -58,7 +58,7 @@ struct GlassChatInputBar: View {
             .padding(.vertical, compact ? 6 : 7)
             .liquidGlassCard(cornerRadius: compact ? 12 : 14, interactive: true)
 
-            VStack(spacing: 4) {
+            HStack(spacing: 6) {
                 if !text.isEmpty {
                     Button {
                         text = ""
@@ -71,25 +71,60 @@ struct GlassChatInputBar: View {
                     .help("Giriş kutusunu temizle")
                 }
 
-                if isBusy, let onStop {
+                Button {
+                    _ = submitNow()
+                } label: {
+                    Text("GÖNDER")
+                        .font(.system(size: compact ? 10.5 : 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, compact ? 11 : 13)
+                        .padding(.vertical, compact ? 7 : 8)
+                        .background(
+                            LinearGradient(
+                                colors: (trimmedText.isEmpty || isBusy)
+                                    ? [Color.green.opacity(0.32), Color.teal.opacity(0.28)]
+                                    : [Color(hex: "#16A34A"), Color(hex: "#15803D")],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            ),
+                            in: RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
+                                .stroke(Color.white.opacity((trimmedText.isEmpty || isBusy) ? 0.14 : 0.35), lineWidth: 1)
+                        )
+                        .shadow(color: (trimmedText.isEmpty || isBusy) ? .clear : Color.green.opacity(0.35), radius: 5, y: 1.5)
+                }
+                .buttonStyle(.plain)
+                .disabled(trimmedText.isEmpty || isBusy)
+                .help("Gönder (↵ veya ⌘↵ · Yeni satır: ⇧↵)")
+
+                if let onStop {
                     Button(action: onStop) {
-                        Image(systemName: "stop.circle.fill")
-                            .foregroundStyle(.red)
-                            .font(.system(size: compact ? 22 : 25))
+                        Text("DURDUR")
+                            .font(.system(size: compact ? 10.5 : 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, compact ? 10 : 12)
+                            .padding(.vertical, compact ? 7 : 8)
+                            .background(
+                                LinearGradient(
+                                    colors: isBusy
+                                        ? [Color(hex: "#EF4444"), Color(hex: "#B91C1C")]
+                                        : [Color.red.opacity(0.32), Color.red.opacity(0.22)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                ),
+                                in: RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: compact ? 10 : 12, style: .continuous)
+                                    .stroke(Color.white.opacity(isBusy ? 0.38 : 0.14), lineWidth: 1)
+                            )
+                            .shadow(color: isBusy ? Color.red.opacity(0.42) : .clear, radius: 5, y: 1.5)
                     }
                     .buttonStyle(.plain)
-                    .help("Görevi durdur")
-                } else {
-                    Button {
-                        _ = submitNow()
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: compact ? 22 : 25))
-                            .foregroundStyle(trimmedText.isEmpty ? Color.secondary.opacity(0.4) : accent)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(trimmedText.isEmpty || isBusy)
-                    .help("Gönder (↵ veya ⌘↵ · Yeni satır: ⇧↵)")
+                    .disabled(!isBusy)
+                    .help("Aktif görevi durdur")
                 }
             }
             .fixedSize()

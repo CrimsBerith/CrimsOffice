@@ -1,6 +1,7 @@
 ---
 name: caveman
 description: Ultra-compressed output mode (v3.1). Cuts output tokens 35-80% while keeping code, tool tags, paths, errors, and negations verbatim.
+triggers: [caveman, kısa, özet, sıkıştır, token, terse]
 ---
 # Caveman Mode Rules
 - Answer first: `[thing] [action] [reason]. [next step].`

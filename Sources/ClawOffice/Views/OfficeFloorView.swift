@@ -50,13 +50,6 @@ struct OfficeFloorView: View {
         HSplitView {
             VStack(spacing: 0) {
                 topHUD
-                if !engine.planTasks.isEmpty {
-                    Divider()
-                    planBoardOverlay
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .liquidGlassBar(tint: .blue)
-                }
                 Divider()
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
@@ -77,6 +70,23 @@ struct OfficeFloorView: View {
                         beamsLayer(size: geo.size)
                         flyingPacketsLayer(size: geo.size)
                         agentsLayer(size: geo.size)
+
+                        // Sağ üstte yüzen cam Aktif Görev Planı kartı
+                        if !engine.planTasks.isEmpty {
+                            VStack {
+                                HStack {
+                                    Spacer()
+                                    planBoardOverlay
+                                        .padding(2)
+                                        .frame(width: min(268, max(210, geo.size.width * 0.30)))
+                                        .liquidGlassCard(cornerRadius: 16, tint: .blue, interactive: true)
+                                        .shadow(color: Color.black.opacity(0.28), radius: 12, y: 4)
+                                }
+                                Spacer()
+                            }
+                            .padding(12)
+                            .zIndex(20_000)
+                        }
                     }
                     .clipped()
                 }
@@ -838,15 +848,23 @@ struct OfficeFloorView: View {
                     }
 
                     let col = Color(hex: agent.accentHex)
+                    // Yumuşak neon hale + kesikli rota çizgisi
                     ctx.stroke(
                         path,
-                        with: .color(col.opacity(0.36)),
-                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [4, 5])
+                        with: .color(col.opacity(0.20)),
+                        style: StrokeStyle(lineWidth: 5.0, lineCap: .round)
+                    )
+                    ctx.stroke(
+                        path,
+                        with: .color(Color.cyan.opacity(0.55)),
+                        style: StrokeStyle(lineWidth: 1.9, lineCap: .round, dash: [3.5, 5.5])
                     )
 
                     let endPt = floorPoint(for: motion.to, in: canvasSize)
-                    let dotRect = CGRect(x: endPt.x - 4, y: endPt.y + 22, width: 8, height: 4)
-                    ctx.fill(Path(ellipseIn: dotRect), with: .color(col.opacity(0.45)))
+                    let haloRect = CGRect(x: endPt.x - 10, y: endPt.y + 19, width: 20, height: 10)
+                    ctx.stroke(Path(ellipseIn: haloRect), with: .color(Color.cyan.opacity(0.55)), lineWidth: 1.2)
+                    let dotRect = CGRect(x: endPt.x - 4.5, y: endPt.y + 21.5, width: 9, height: 5)
+                    ctx.fill(Path(ellipseIn: dotRect), with: .color(col.opacity(0.75)))
                 }
             }
         }

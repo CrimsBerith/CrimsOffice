@@ -1,6 +1,7 @@
 ---
 name: swarms
 description: Build agents and multi-agent systems with the Swarms framework — the Agent class, tools, autonomous loops, memory, and the 15+ multi-agent architectures (SequentialWorkflow, ConcurrentWorkflow, GraphWorkflow, HierarchicalSwarm, SwarmRouter, and more). Use whenever writing, reviewing, or debugging code that imports `swarms`.
+triggers: [swarms, swarm, workflow, orkestrasyon, multi-agent, hierarchical, concurrent]
 ---
 <!-- source: https://github.com/kyegomez/swarms/blob/master/SKILL.md -->
 
