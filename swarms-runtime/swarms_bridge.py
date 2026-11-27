@@ -23,8 +23,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 RUNTIME_DIR = Path(__file__).resolve().parent
-WORKSPACE_DIR = Path(os.environ.get("WORKSPACE_DIR", str(RUNTIME_DIR / "workspace")))
-WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+def _resolve_writable_workspace() -> Path:
+    explicit = os.environ.get("WORKSPACE_DIR", "").strip()
+    candidates = []
+    if explicit:
+        candidates.append(Path(explicit))
+    # Signed .app/Contents/Resources must never be mutated at runtime
+    if ".app/Contents/Resources" not in str(RUNTIME_DIR):
+        candidates.append(RUNTIME_DIR / "workspace")
+    candidates.append(Path.home() / ".openclaw" / "swarms-runtime" / "workspace")
+    candidates.append(Path("/tmp/crimsoffice-swarms-workspace"))
+    for cand in candidates:
+        try:
+            cand.mkdir(parents=True, exist_ok=True)
+            probe = cand / ".write_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return cand
+        except OSError:
+            continue
+    return Path("/tmp")
+
+WORKSPACE_DIR = _resolve_writable_workspace()
 
 os.environ.setdefault("SWARMS_TELEMETRY_ENABLED", "false")
 os.environ.setdefault("WORKSPACE_DIR", str(WORKSPACE_DIR))

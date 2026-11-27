@@ -502,13 +502,16 @@ enum SwarmsRuntimeService {
         let fm = FileManager.default
         let detected = AppConfig.detectDefaultWorkspacePath()
         let bundleRes = Bundle.main.resourceURL?.appendingPathComponent("swarms-runtime").path ?? ""
+        let homeSwarms = fm.homeDirectoryForCurrentUser.appendingPathComponent(".openclaw/swarms-runtime").path
         let candidates = [
             workspacePath,
             detected,
-            "/Volumes/DATA/Builds/ClawOffice",
             bundleRes,
-            fm.currentDirectoryPath
+            homeSwarms,
+            fm.currentDirectoryPath,
+            "/Volumes/DATA/Builds/ClawOffice"
         ]
+        // 1) Öncelik: hazır .venv/bin/python + swarms_bridge.py
         for root in candidates where !root.isEmpty {
             let rtDir = root.hasSuffix("swarms-runtime")
                 ? root
@@ -517,6 +520,19 @@ enum SwarmsRuntimeService {
             let bridge = URL(fileURLWithPath: rtDir).appendingPathComponent("swarms_bridge.py").path
             if fm.isExecutableFile(atPath: py) && fm.fileExists(atPath: bridge) {
                 return (py, bridge, rtDir)
+            }
+        }
+        // 2) Fallback: sistem python3 + swarms_bridge.py (ör. paketlenmiş .app içindeki köprü)
+        let systemPythons = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
+        if let sysPy = systemPythons.first(where: { fm.isExecutableFile(atPath: $0) }) {
+            for root in candidates where !root.isEmpty {
+                let rtDir = root.hasSuffix("swarms-runtime")
+                    ? root
+                    : URL(fileURLWithPath: root).appendingPathComponent("swarms-runtime").path
+                let bridge = URL(fileURLWithPath: rtDir).appendingPathComponent("swarms_bridge.py").path
+                if fm.fileExists(atPath: bridge) {
+                    return (sysPy, bridge, rtDir)
+                }
             }
         }
         return nil
@@ -535,7 +551,9 @@ enum SwarmsRuntimeService {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser.path
         let logsDir = "\(home)/Library/Logs/ClawOffice"
-        let wsDir = URL(fileURLWithPath: paths.runtimeDir).appendingPathComponent("workspace").path
+        let wsDir = paths.runtimeDir.contains(".app/Contents/Resources")
+            ? "\(home)/.openclaw/swarms-runtime/workspace"
+            : URL(fileURLWithPath: paths.runtimeDir).appendingPathComponent("workspace").path
         try? fm.createDirectory(atPath: logsDir, withIntermediateDirectories: true)
         try? fm.createDirectory(atPath: wsDir, withIntermediateDirectories: true)
 
@@ -647,6 +665,11 @@ enum SwarmsRuntimeService {
         var env = ProcessInfo.processInfo.environment
         for k in env.keys where k.hasPrefix("CLAWOFFICE_") { env.removeValue(forKey: k) }
         env["PATH"] = PowerShellTools.extendedEnvPath()
+        let safeWs = paths.runtimeDir.contains(".app/Contents/Resources")
+            ? "\(home)/.openclaw/swarms-runtime/workspace"
+            : URL(fileURLWithPath: paths.runtimeDir).appendingPathComponent("workspace").path
+        try? fm.createDirectory(atPath: safeWs, withIntermediateDirectories: true)
+        env["WORKSPACE_DIR"] = safeWs
         env["SWARMS_TELEMETRY_ENABLED"] = "false"
         env["LITELLM_LOG"] = "ERROR"
         env["PYTHONUNBUFFERED"] = "1"

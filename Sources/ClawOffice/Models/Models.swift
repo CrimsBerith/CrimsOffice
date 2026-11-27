@@ -891,6 +891,39 @@ struct Point2D: Codable, Hashable, Sendable {
     var y: Double
 }
 
+/// 60 FPS yürüyüş kinematiği: kavisli doğal rota, hızlanma/yavaşlama adım şiddeti ve yön değiştirmede sıfır geriye kayma
+struct AgentWalkMotion: Equatable, Sendable {
+    let from: Point2D
+    let to: Point2D
+    let startedAt: Date
+    let duration: TimeInterval
+    let arcBend: Double
+
+    func sample(at now: Date) -> (point: Point2D, progress: Double, strideIntensity: Double) {
+        let safeDur = max(0.12, duration)
+        let rawT = min(1.0, max(0.0, now.timeIntervalSince(startedAt) / safeDur))
+        // Cubic ease-in-out: yumuşak kalkış ve zarif duruş
+        let eased = rawT < 0.5
+            ? 4.0 * rawT * rawT * rawT
+            : 1.0 - pow(-2.0 * rawT + 2.0, 3.0) / 2.0
+
+        let dx = to.x - from.x
+        let dy = to.y - from.y
+        let dist = max(0.0001, hypot(dx, dy))
+        // Yürüyüş rotasına dik hafif organik kavis
+        let nx = -dy / dist
+        let ny = dx / dist
+        let curve = sin(eased * .pi) * arcBend
+
+        let x = min(0.90, max(0.08, from.x + dx * eased + nx * curve))
+        let y = min(0.86, max(0.14, from.y + dy * eased + ny * curve))
+
+        // Kalkış ve varışta adım genliğini yumuşakça artır/azalt
+        let strideIntensity = rawT >= 1.0 ? 0.0 : min(1.0, max(0.18, sin(rawT * .pi) * 1.35))
+        return (Point2D(x: x, y: y), rawT, strideIntensity)
+    }
+}
+
 enum OfficeZone: String, Codable, Sendable {
     case desk = "Çalışma Masası"
     case meetingRoom = "Toplantı Odası"
@@ -1533,7 +1566,7 @@ struct AppConfig: Codable, Sendable {
             injectAgentsMD: true,
             injectOpenClawMemory: true,
             injectGraphifyReport: true,
-            enabledSkillIds: ["rtk-proxy", "graphify", "swift-audit", "self-evolution", "swarms"],
+            enabledSkillIds: ["rtk-proxy", "graphify", "swift-audit", "self-evolution", "ecosystem-scout", "caveman", "swarms"],
             enableAmbientMovement: true,
             enableSocialChatter: true,
             enableStreaming: true,
@@ -1674,9 +1707,52 @@ struct OfficeCronJob: Identifiable, Codable, Hashable, Sendable {
     var targetAgentName: String
     var intervalMinutes: Int
     var isEnabled: Bool = true
+    var createdAt: Date = Date()
     var lastRunAt: Date? = nil
     var lastStatus: String = "Henüz çalıştırılmadı"
     var source: String = "Crims Office"
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, prompt, targetAgentName, intervalMinutes, isEnabled, createdAt, lastRunAt, lastStatus, source
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        prompt: String,
+        targetAgentName: String,
+        intervalMinutes: Int,
+        isEnabled: Bool = true,
+        createdAt: Date = Date(),
+        lastRunAt: Date? = nil,
+        lastStatus: String = "Henüz çalıştırılmadı",
+        source: String = "Crims Office"
+    ) {
+        self.id = id
+        self.name = name
+        self.prompt = prompt
+        self.targetAgentName = targetAgentName
+        self.intervalMinutes = intervalMinutes
+        self.isEnabled = isEnabled
+        self.createdAt = createdAt
+        self.lastRunAt = lastRunAt
+        self.lastStatus = lastStatus
+        self.source = source
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        prompt = try c.decode(String.self, forKey: .prompt)
+        targetAgentName = try c.decode(String.self, forKey: .targetAgentName)
+        intervalMinutes = try c.decode(Int.self, forKey: .intervalMinutes)
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        lastRunAt = try c.decodeIfPresent(Date.self, forKey: .lastRunAt)
+        lastStatus = try c.decodeIfPresent(String.self, forKey: .lastStatus) ?? "Henüz çalıştırılmadı"
+        source = try c.decodeIfPresent(String.self, forKey: .source) ?? "Crims Office"
+    }
 }
 
 struct OpenClawSessionSummary: Identifiable, Hashable, Sendable {

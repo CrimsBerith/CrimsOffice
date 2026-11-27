@@ -27,6 +27,10 @@ final class OpenClawGatewayService: @unchecked Sendable {
     private var wsURLSession: URLSession?
     private var onGatewayEvent: (@Sendable (String) -> Void)?
 
+    deinit {
+        disconnectWebSocket()
+    }
+
     // MARK: - Device Identity & Ed25519 v3 Signature (openclaw-office parity)
 
     struct DeviceIdentity: Sendable {
@@ -312,6 +316,36 @@ final class OpenClawGatewayService: @unchecked Sendable {
         task.resume()
         sendConnectHandshake(over: task)
         receiveLoop(over: task)
+        schedulePing(over: task)
+    }
+
+    private func schedulePing(over task: URLSessionWebSocketTask) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 25.0) { [weak self, weak task] in
+            guard let self, let task else { return }
+            self.lock.lock()
+            let isCurrent = (self.wsTask === task && task.state == .running)
+            self.lock.unlock()
+            guard isCurrent else { return }
+            task.sendPing { [weak self, weak task] error in
+                guard let self, let task else { return }
+                if error != nil {
+                    self.cleanupFailedTask(task)
+                } else {
+                    self.schedulePing(over: task)
+                }
+            }
+        }
+    }
+
+    private func cleanupFailedTask(_ failedTask: URLSessionWebSocketTask) {
+        lock.lock()
+        if wsTask === failedTask {
+            wsTask?.cancel(with: .goingAway, reason: nil)
+            wsTask = nil
+            wsURLSession?.invalidateAndCancel()
+            wsURLSession = nil
+        }
+        lock.unlock()
     }
 
     func disconnectWebSocket() {
@@ -398,7 +432,7 @@ final class OpenClawGatewayService: @unchecked Sendable {
                 }
                 self.receiveLoop(over: task)
             case .failure:
-                break
+                self.cleanupFailedTask(task)
             }
         }
     }

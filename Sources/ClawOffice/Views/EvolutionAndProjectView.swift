@@ -56,11 +56,20 @@ struct EvolutionAndProjectView: View {
     }
 
     private var selfRepoPath: String {
-        let detected = AppConfig.detectDefaultWorkspacePath()
-        if FileManager.default.fileExists(atPath: detected + "/build_app.sh") {
-            return detected
+        let fm = FileManager.default
+        let candidates = [
+            engine.workspacePath,
+            AppConfig.detectDefaultWorkspacePath(),
+            fm.currentDirectoryPath,
+            Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().path,
+            "/Volumes/DATA/Builds/ClawOffice"
+        ]
+        for path in candidates where !path.isEmpty {
+            if fm.fileExists(atPath: path + "/build_app.sh") {
+                return path
+            }
         }
-        return "/Volumes/DATA/Builds/ClawOffice"
+        return AppConfig.detectDefaultWorkspacePath()
     }
 
     var body: some View {

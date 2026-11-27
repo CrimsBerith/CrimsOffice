@@ -5,6 +5,7 @@ import AppKit
 struct MarkdownMessageView: View {
     let text: String
     var baseFontSize: CGFloat = 13
+    var compact: Bool = false
     var textColor: Color = .primary
 
     private enum Block: Identifiable {
@@ -21,13 +22,13 @@ struct MarkdownMessageView: View {
 
     var body: some View {
         let blocks = parseBlocks(text)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: compact ? 4 : 8) {
             ForEach(blocks) { block in
                 switch block {
                 case .prose(_, let content):
                     proseBlockView(content)
                 case .code(_, let language, let code):
-                    MarkdownCodeBlockView(language: language, code: code)
+                    MarkdownCodeBlockView(language: language, code: code, compact: compact)
                 case .table(_, let headers, let rows):
                     markdownTableView(headers: headers, rows: rows)
                 }
@@ -165,19 +166,19 @@ struct MarkdownMessageView: View {
     @ViewBuilder
     private func proseBlockView(_ content: String) -> some View {
         let elements = buildProseElements(from: content)
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: compact ? 2.5 : 4) {
             ForEach(elements) { elem in
                 switch elem {
                 case .spacer:
-                    Spacer().frame(height: 3)
+                    Spacer().frame(height: compact ? 1.5 : 3)
                 case .divider:
-                    Divider().padding(.vertical, 3)
+                    Divider().padding(.vertical, compact ? 1.5 : 3)
                 case .heading(_, let level, let text):
-                    let delta: CGFloat = level == 1 ? 4 : (level == 2 ? 2.5 : (level == 3 ? 1 : 0))
+                    let delta: CGFloat = level == 1 ? (compact ? 2.5 : 4) : (level == 2 ? (compact ? 1.5 : 2.5) : (level == 3 ? 1 : 0))
                     inlineText(text)
                         .font(.system(size: baseFontSize + delta, weight: .bold))
                         .foregroundStyle(textColor)
-                        .padding(.top, level <= 2 ? 5 : 3)
+                        .padding(.top, compact ? (level <= 2 ? 2.5 : 1.5) : (level <= 2 ? 5 : 3))
                 case .quote(_, let text):
                     HStack(alignment: .top, spacing: 8) {
                         RoundedRectangle(cornerRadius: 1.5)
@@ -269,27 +270,31 @@ struct MarkdownMessageView: View {
     private func markdownTableView(headers: [String], rows: [[String]]) -> some View {
         let colCount = max(headers.count, rows.map(\.count).max() ?? 0)
         if colCount > 0 {
+            let cellHPad: CGFloat = compact ? 8 : 10
+            let cellVPad: CGFloat = compact ? 4 : 5
+            let minColWidth: CGFloat = compact ? 76 : 90
             ScrollView(.horizontal, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 0) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
                         ForEach(0..<colCount, id: \.self) { cIdx in
                             let title = cIdx < headers.count ? headers[cIdx] : ""
                             inlineText(title)
                                 .font(.system(size: baseFontSize - 1, weight: .bold))
-                                .padding(.horizontal, 10).padding(.vertical, 6)
-                                .frame(minWidth: 90, alignment: .leading)
+                                .padding(.horizontal, cellHPad).padding(.vertical, compact ? 5 : 6)
+                                .frame(minWidth: minColWidth, alignment: .leading)
                         }
                     }
                     .background(Color.primary.opacity(0.08))
                     Divider()
+                        .gridCellUnsizedAxes([.horizontal])
                     ForEach(Array(rows.enumerated()), id: \.offset) { rIdx, row in
-                        HStack(spacing: 0) {
+                        GridRow {
                             ForEach(0..<colCount, id: \.self) { cIdx in
                                 let cell = cIdx < row.count ? row[cIdx] : ""
                                 inlineText(cell)
                                     .font(.system(size: baseFontSize - 1))
-                                    .padding(.horizontal, 10).padding(.vertical, 5)
-                                    .frame(minWidth: 90, alignment: .leading)
+                                    .padding(.horizontal, cellHPad).padding(.vertical, cellVPad)
+                                    .frame(minWidth: minColWidth, alignment: .leading)
                             }
                         }
                         .background(rIdx % 2 == 1 ? Color.primary.opacity(0.03) : Color.clear)
@@ -313,7 +318,26 @@ struct MarkdownMessageView: View {
 private struct MarkdownCodeBlockView: View {
     let language: String
     let code: String
+    let compact: Bool
     @State private var copied = false
+    @State private var isExpanded: Bool
+
+    private var lineCount: Int {
+        max(1, code.components(separatedBy: "\n").count)
+    }
+
+    private var isCollapsible: Bool {
+        lineCount > 5 || code.count > 240
+    }
+
+    init(language: String, code: String, compact: Bool = false) {
+        self.language = language
+        self.code = code
+        self.compact = compact
+        let lines = max(1, code.components(separatedBy: "\n").count)
+        let shouldCollapse = compact ? (lines > 5 || code.count > 240) : (lines > 14 || code.count > 900)
+        _isExpanded = State(initialValue: !shouldCollapse)
+    }
 
     var body: some View {
         SmokedGlassSurface(cornerRadius: 10) {
@@ -322,11 +346,30 @@ private struct MarkdownCodeBlockView: View {
                     Circle().fill(Color.red.opacity(0.75)).frame(width: 7, height: 7)
                     Circle().fill(Color.yellow.opacity(0.75)).frame(width: 7, height: 7)
                     Circle().fill(Color.green.opacity(0.75)).frame(width: 7, height: 7)
-                    Text(language.isEmpty ? "kod" : language)
+                    Text("\(language.isEmpty ? "kod" : language) · \(lineCount) satır")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.75))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .padding(.leading, 4)
                     Spacer()
+                    if isCollapsible {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                isExpanded.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(isExpanded ? "Daralt" : "Göster").font(.system(size: 9))
+                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down").font(.system(size: 8.5))
+                            }
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .fixedSize(horizontal: true, vertical: false)
+                    }
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(code, forType: .string)
@@ -345,17 +388,29 @@ private struct MarkdownCodeBlockView: View {
                         .foregroundStyle(copied ? Color.green : .white.opacity(0.8))
                     }
                     .buttonStyle(.plain)
+                    .fixedSize(horizontal: true, vertical: false)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 6)
+                .padding(.horizontal, 9).padding(.vertical, 5)
                 .background(Color.white.opacity(0.04))
 
-                ScrollView(.horizontal, showsIndicators: true) {
-                    Text(code)
-                        .font(.system(size: 11.5, design: .monospaced))
+                if isExpanded {
+                    let codeText = Text(code)
+                        .font(.system(size: compact ? 11 : 11.5, design: .monospaced))
                         .foregroundStyle(Color(red: 0.86, green: 0.94, blue: 1.0))
                         .textSelection(.enabled)
-                        .padding(10)
+                        .padding(compact ? 8 : 10)
                         .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if isCollapsible {
+                        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+                            codeText
+                        }
+                        .frame(maxHeight: compact ? 150 : 220)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: true) {
+                            codeText
+                        }
+                    }
                 }
             }
         }

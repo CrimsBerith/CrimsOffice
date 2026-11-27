@@ -469,6 +469,7 @@ final class OfficeEngine: ObservableObject {
     private var providerConsecutiveErrors: [UUID: Int] = [:]
     @Published var walkingAgentIds: Set<UUID> = []
     @Published var agentFacingLeft: [UUID: Bool] = [:]
+    @Published var activeWalkMotions: [UUID: AgentWalkMotion] = [:]
     private var walkTokens: [UUID: UUID] = [:]
     private var ambientStepIndex: Int = 0
     @Published private(set) var modelMetrics: [ModelRouteKey: ModelRuntimeMetrics] = [:]
@@ -687,10 +688,13 @@ final class OfficeEngine: ObservableObject {
     }
 
     func refreshWorkspaceAndSkills(enabledIds: Set<String>? = nil) {
+        let hasExplicitSelection = (enabledIds != nil) || !skills.isEmpty
         let keep = enabledIds ?? Set(skills.filter { $0.isEnabled }.map { $0.id })
         var scanned = OpenClawWorkspaceService.discoverSkills(openClawHome: openClawHomePath, workspacePath: workspacePath)
-        for i in scanned.indices {
-            if keep.contains(scanned[i].id) { scanned[i].isEnabled = true }
+        if hasExplicitSelection {
+            for i in scanned.indices {
+                scanned[i].isEnabled = keep.contains(scanned[i].id)
+            }
         }
         skills = scanned
         discoveredAgentsMD = OpenClawWorkspaceService.discoverProjectAgentsMD(workspacePath: workspacePath)
@@ -823,9 +827,11 @@ final class OfficeEngine: ObservableObject {
 
     private func startAmbientLoop() {
         ambientTimer?.invalidate()
-        ambientTimer = Timer.scheduledTimer(withTimeInterval: 2.8, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 2.8, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tickAmbientOffice() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        ambientTimer = timer
         // Açılışta ekibin hemen canlanması için kısa bir başlangıç yürüyüşü tetikle
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(0.6))
@@ -833,21 +839,74 @@ final class OfficeEngine: ObservableObject {
         }
     }
 
+    static func classifyFloorZone(for point: Point2D, deskPosition: Point2D) -> (zone: OfficeZone, bubble: String) {
+        if hypot(point.x - deskPosition.x, point.y - deskPosition.y) < 0.09 {
+            return (.desk, "🚶‍♀️ Masasına dönüyor")
+        }
+        if point.x < 0.36 && point.y > 0.66 {
+            return (.coffeeLounge, "☕️ Kahve köşesine yürüyor")
+        }
+        if point.x > 0.64 && point.y > 0.66 {
+            return (.serverRack, "🖥️ Mac Studio Hub'a gidiyor")
+        }
+        if point.x > 0.34 && point.x < 0.66 && point.y > 0.36 && point.y < 0.64 {
+            return (.meetingRoom, "✨ Toplantı odasına geçiyor")
+        }
+        return (.visitingPeer, "🚶‍♀️ Stüdyoda yürüyor")
+    }
+
+    func resolveNonOverlappingTarget(_ raw: Point2D, for agentId: UUID) -> Point2D {
+        var candidate = Point2D(
+            x: min(0.88, max(0.10, raw.x)),
+            y: min(0.84, max(0.15, raw.y))
+        )
+        for other in agents where other.id != agentId {
+            let dx = candidate.x - other.currentPosition.x
+            let dy = candidate.y - other.currentPosition.y
+            let dist = hypot(dx, dy)
+            if dist < 0.055 {
+                let angle = dist > 0.001 ? atan2(dy, dx) : Double(abs(agentId.hashValue) % 628) / 100.0
+                candidate.x = min(0.88, max(0.10, other.currentPosition.x + cos(angle) * 0.068))
+                candidate.y = min(0.84, max(0.15, other.currentPosition.y + sin(angle) * 0.068))
+            }
+        }
+        return candidate
+    }
+
+    /// Ajanın o anki gerçek 60 FPS ekrandaki konumunu döndürür (yürürken ara nokta, dururken currentPosition)
+    func visualPosition(for agentId: UUID, at now: Date = Date()) -> Point2D {
+        if let motion = activeWalkMotions[agentId] {
+            return motion.sample(at: now).point
+        }
+        return agents.first(where: { $0.id == agentId })?.currentPosition ?? Point2D(x: 0.5, y: 0.5)
+    }
+
+    /// Yürüyüş kalkış/varış yumuşatma faktörü (0.0...1.0)
+    func strideIntensity(for agentId: UUID, at now: Date = Date()) -> Double {
+        if let motion = activeWalkMotions[agentId] {
+            return motion.sample(at: now).strideIntensity
+        }
+        return walkingAgentIds.contains(agentId) ? 1.0 : 0.0
+    }
+
     @MainActor
     func moveAgent(
         _ agentId: UUID,
-        to target: Point2D,
+        to rawTarget: Point2D,
         zone: OfficeZone,
         status: AgentStatus? = nil,
         bubble: String? = nil
     ) {
         guard let idx = agents.firstIndex(where: { $0.id == agentId }) else { return }
-        let start = agents[idx].currentPosition
+        let now = Date()
+        let target = zone == .desk ? rawTarget : resolveNonOverlappingTarget(rawTarget, for: agentId)
+        // Yürüyüş ortasında yön değiştirilirse ekrandaki GERÇEK konumdan başla (geriye kayma/moonwalk sıfır)
+        let start = visualPosition(for: agentId, at: now)
         let dx = target.x - start.x
         let dy = target.y - start.y
         let distance = hypot(dx, dy)
 
-        if abs(dx) > 0.015 {
+        if abs(dx) > 0.012 {
             agentFacingLeft[agentId] = dx < 0
         }
 
@@ -863,25 +922,32 @@ final class OfficeEngine: ObservableObject {
             agents[idx].currentZone = zone
             walkTokens[agentId] = nil
             walkingAgentIds.remove(agentId)
+            activeWalkMotions[agentId] = nil
             return
         }
 
         let token = UUID()
         walkTokens[agentId] = token
-        let duration = min(3.6, max(1.6, distance * 5.2))
-        walkingAgentIds.insert(agentId)
+        let duration = min(3.8, max(1.3, distance * 4.8))
+        let bendSign: Double = (abs(agentId.hashValue) % 2 == 0) ? 1.0 : -1.0
+        let arcBend = min(0.032, distance * 0.12) * bendSign
 
-        withAnimation(.easeInOut(duration: duration)) {
-            if let currentIdx = agents.firstIndex(where: { $0.id == agentId }) {
-                agents[currentIdx].currentPosition = target
-                agents[currentIdx].currentZone = zone
-            }
-        }
+        activeWalkMotions[agentId] = AgentWalkMotion(
+            from: start,
+            to: target,
+            startedAt: now,
+            duration: duration,
+            arcBend: arcBend
+        )
+        walkingAgentIds.insert(agentId)
+        agents[idx].currentPosition = target
+        agents[idx].currentZone = zone
 
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(duration))
             guard let self, self.walkTokens[agentId] == token else { return }
             self.walkingAgentIds.remove(agentId)
+            self.activeWalkMotions[agentId] = nil
             self.walkTokens[agentId] = nil
             if let arrivedIdx = self.agents.firstIndex(where: { $0.id == agentId }),
                self.agents[arrivedIdx].currentZone == .desk,
@@ -922,9 +988,9 @@ final class OfficeEngine: ObservableObject {
             // Masadaki başka bir kızı aynı anda stüdyo turuna çıkar ki ofis hep canlı kalsın
         }
 
-        // Aynı anda en fazla 2 kız stüdyo içinde dolaşsın
+        // Aynı anda en fazla 3 çalışan stüdyo içinde dolaşsın (ofis hep canlı kalsın)
         let activeStrollers = agents.filter { $0.currentZone != .desk && ($0.status == .idle || $0.status == .chatting || walkingAgentIds.contains($0.id)) }.count
-        guard activeStrollers < 2 else { return }
+        guard activeStrollers < 3 else { return }
 
         let deskCandidates = idleAgents.filter { $0.currentZone == .desk }
         guard !deskCandidates.isEmpty else { return }
@@ -951,12 +1017,23 @@ final class OfficeEngine: ObservableObject {
         moveAgent(chosen.id, to: pick.0, zone: pick.1, status: .chatting, bubble: pick.2)
     }
 
+    /// İki ajanı sohbet/toplantı sırasında birbirine doğru döndürür
+    func updateMutualFacing(between firstId: UUID, and secondId: UUID) {
+        guard let a = agents.first(where: { $0.id == firstId }),
+              let b = agents.first(where: { $0.id == secondId }) else { return }
+        let dx = b.currentPosition.x - a.currentPosition.x
+        if abs(dx) > 0.005 {
+            agentFacingLeft[firstId] = dx < 0
+            agentFacingLeft[secondId] = dx > 0
+        }
+    }
+
     private func triggerAmbientPeerDialogue(from chosen: OfficeAgent, to peer: OfficeAgent) {
         let pair = Self.ambientDialoguePairs[ambientStepIndex % Self.ambientDialoguePairs.count]
-        let offsetX = peer.deskPosition.x > 0.5 ? -0.07 : 0.07
+        let offsetX = peer.deskPosition.x > 0.5 ? -0.075 : 0.075
         let spot = Point2D(
             x: min(0.86, max(0.14, peer.deskPosition.x + offsetX)),
-            y: min(0.82, max(0.18, peer.deskPosition.y + 0.03))
+            y: min(0.82, max(0.18, peer.deskPosition.y + 0.025))
         )
         moveAgent(chosen.id, to: spot, zone: .visitingPeer, status: .chatting, bubble: "💬 \(pair.0)")
         showBeam(from: chosen.id, to: peer.id, label: "💬 Sohbet", accentHex: chosen.accentHex, duration: 4.5)
@@ -973,6 +1050,7 @@ final class OfficeEngine: ObservableObject {
             guard let self,
                   let peerIdx = self.agents.firstIndex(where: { $0.id == peerId }),
                   !self.agents[peerIdx].status.isBusy else { return }
+            self.updateMutualFacing(between: chosenId, and: peerId)
             self.agents[peerIdx].status = .chatting
             self.agents[peerIdx].statusBubble = "💬 \(replyLine)"
             let livePeer = self.agents[peerIdx]
@@ -1337,7 +1415,23 @@ final class OfficeEngine: ObservableObject {
         return (true, "\(cleanName) eklendi.")
     }
 
+    private func clearWalkState(for id: UUID) {
+        walkTokens.removeValue(forKey: id)
+        walkingAgentIds.remove(id)
+        activeWalkMotions.removeValue(forKey: id)
+    }
+
     func resetToSingleAgentOffice() {
+        for task in activeTasks.values {
+            task.cancel()
+        }
+        activeTasks.removeAll()
+        activeTaskTokens.removeAll()
+        walkTokens.removeAll()
+        walkingAgentIds.removeAll()
+        activeWalkMotions.removeAll()
+        agentFacingLeft.removeAll()
+        flyingPackets.removeAll()
         let agyId = providers.first(where: { $0.kind == .antigravityCLI && $0.isConfigured })?.id
         let evrenId = providers.first(where: { $0.kind == .evren })?.id ?? (providers.first?.id ?? UUID())
         agents = OfficeAgent.defaultAgents(antigravityId: agyId, evrenId: evrenId)
@@ -1350,6 +1444,10 @@ final class OfficeEngine: ObservableObject {
 
     func deleteAgent(id: UUID) {
         cancelIndividualTask(for: id)
+        clearWalkState(for: id)
+        agentFacingLeft.removeValue(forKey: id)
+        activeBeams.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
+        flyingPackets.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
         agents.removeAll { $0.id == id }
         if selectedAgentId == id { selectedAgentId = agents.first?.id }
         saveConfig()
@@ -1368,6 +1466,7 @@ final class OfficeEngine: ObservableObject {
         activeTasks[id]?.cancel()
         activeTasks.removeValue(forKey: id)
         activeTaskTokens.removeValue(forKey: id)
+        clearWalkState(for: id)
         if let i = agents.firstIndex(where: { $0.id == id }) {
             agents[i].status = .idle
             agents[i].statusBubble = "Durduruldu"
@@ -1485,12 +1584,34 @@ final class OfficeEngine: ObservableObject {
         let activeSkills = skills.filter { $0.isEnabled }
         if !activeSkills.isEmpty {
             let lowerPrompt = userPrompt.lowercased()
+            let tokenDelimiters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "/_-")).inverted
+            let promptTokens = Set(
+                lowerPrompt
+                    .components(separatedBy: tokenDelimiters)
+                    .filter { !$0.isEmpty }
+            )
             var indexLines: [String] = []
             var loadedBodies: [String] = []
+            var remainingBudget = 6000
+
             for sk in activeSkills {
                 indexLines.append("- \(sk.name) (/\(sk.id)): \(sk.description)")
-                if sk.triggers.contains(where: { lowerPrompt.contains($0.lowercased()) }) || lowerPrompt.contains("/\(sk.id)") {
-                    loadedBodies.append("### Skill: \(sk.name)\n\(sk.body)")
+                let explicitSlash = lowerPrompt.contains("/\(sk.id.lowercased())")
+                let triggerMatched = sk.triggers.contains { trig in
+                    let clean = trig.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    guard !clean.isEmpty else { return false }
+                    if clean.contains(" ") || clean.hasPrefix("/") {
+                        return lowerPrompt.contains(clean)
+                    }
+                    return promptTokens.contains(clean)
+                }
+                if (explicitSlash || triggerMatched), remainingBudget > 220 {
+                    let perSkillCap = min(2400, remainingBudget)
+                    let clipped = sk.body.count > perSkillCap
+                        ? String(sk.body.prefix(perSkillCap)) + "\n… [bağlam bütçesi için kısaltıldı]"
+                        : sk.body
+                    loadedBodies.append("### Skill: \(sk.name)\n\(clipped)")
+                    remainingBudget -= clipped.count
                 }
             }
             sections.append("[AKTİF YETENEKLER (PROGRESSIVE DISCLOSURE)]\n" + indexLines.joined(separator: "\n"))

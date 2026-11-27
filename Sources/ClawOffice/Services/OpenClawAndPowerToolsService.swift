@@ -156,7 +156,14 @@ enum OpenClawWorkspaceService {
     }
 
     /// Saves a newly evolved OpenClaw SKILL.md created by the agents during Self-Improvement
-    static func saveEvolvedSkill(slug: String, name: String, description: String, body: String, openClawHome: String) throws -> String {
+    static func saveEvolvedSkill(
+        slug: String,
+        name: String,
+        description: String,
+        body: String,
+        openClawHome: String,
+        triggers: [String] = []
+    ) throws -> String {
         let ascii = slug
             .replacingOccurrences(of: "ı", with: "i")
             .replacingOccurrences(of: "İ", with: "i")
@@ -172,18 +179,43 @@ enum OpenClawWorkspaceService {
         let safeDesc = description.replacingOccurrences(of: #"[\r\n]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "---", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanTriggers = Array(Set(triggers
+            .map { $0.replacingOccurrences(of: #"[\r\n]+"#, with: " ", options: .regularExpression).trimmingCharacters(in: CharacterSet(charactersIn: " \"'[],")) }
+            .filter { !$0.isEmpty }
+        )).sorted()
+        let triggersLine = cleanTriggers.isEmpty ? "" : "\ntriggers: [\(cleanTriggers.joined(separator: ", "))]"
+
         let skillDir = URL(fileURLWithPath: openClawHome).appendingPathComponent("skills").appendingPathComponent(safeSlug)
         try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
         let md = """
         ---
         name: \(safeName.isEmpty ? safeSlug : safeName)
-        description: \(safeDesc)
+        description: \(safeDesc)\(triggersLine)
         ---
         \(body)
         """
         let fileURL = skillDir.appendingPathComponent("SKILL.md")
         try md.write(to: fileURL, atomically: true, encoding: .utf8)
         return fileURL.path
+    }
+
+    static func deleteCustomSkill(at sourcePath: String, openClawHome: String) throws {
+        guard sourcePath != "Dahili" else {
+            throw NSError(domain: "ClawOfficeSkill", code: 1, userInfo: [NSLocalizedDescriptionKey: "Dahili sistem becerileri silinemez; yanındaki anahtardan kapatabilirsiniz."])
+        }
+        let skillFile = URL(fileURLWithPath: sourcePath).standardizedFileURL
+        let skillDir = skillFile.deletingLastPathComponent()
+        let allowedRoots = [
+            URL(fileURLWithPath: openClawHome).appendingPathComponent("skills").standardizedFileURL.path,
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".openclaw/skills").standardizedFileURL.path
+        ]
+        let isInsideAllowedRoot = allowedRoots.contains { root in
+            skillDir.path.hasPrefix(root + "/")
+        }
+        guard isInsideAllowedRoot else {
+            throw NSError(domain: "ClawOfficeSkill", code: 2, userInfo: [NSLocalizedDescriptionKey: "Güvenlik gereği yalnızca OpenClaw skills klasöründeki özel beceriler silinebilir."])
+        }
+        try FileManager.default.removeItem(at: skillDir)
     }
 
     static func discoverProjectAgentsMD(workspacePath: String) -> [(relativePath: String, content: String)] {
@@ -221,17 +253,25 @@ enum OpenClawWorkspaceService {
             for item in items {
                 let skillFile = URL(fileURLWithPath: rootPath).appendingPathComponent(item).appendingPathComponent("SKILL.md")
                 guard let raw = try? String(contentsOf: skillFile, encoding: .utf8) else { continue }
-                let parsed = parseSkillMarkdown(slug: item, raw: raw, path: skillFile.path)
+                var parsed = parseSkillMarkdown(slug: item, raw: raw, path: skillFile.path)
+                if let existing = found[parsed.id] {
+                    // Diskteki SKILL.md dahili beceriyi güncellerken zengin tetikleyicileri ve varsayılan aktifliği korur
+                    parsed.triggers = Array(Set(existing.triggers + parsed.triggers)).sorted()
+                    parsed.isEnabled = existing.isEnabled
+                }
                 found[parsed.id] = parsed
             }
         }
         return found.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    private static func parseSkillMarkdown(slug: String, raw: String, path: String) -> AgentSkill {
+    static func parseSkillMarkdown(slug: String, raw: String, path: String) -> AgentSkill {
         var name = slug
         var desc = "OpenClaw SKILL.md yeteneği"
         var body = raw
+        var triggers: [String] = [slug, "/\(slug)"]
+        var inTriggersBlock = false
+
         if raw.hasPrefix("---") {
             let parts = raw.components(separatedBy: "---")
             if parts.count >= 3 {
@@ -240,14 +280,34 @@ enum OpenClawWorkspaceService {
                 for line in front.components(separatedBy: .newlines) {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     if trimmed.hasPrefix("name:") {
+                        inTriggersBlock = false
                         name = trimmed.dropFirst(5).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
                     } else if trimmed.hasPrefix("description:") {
+                        inTriggersBlock = false
                         desc = trimmed.dropFirst(12).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    } else if trimmed.hasPrefix("triggers:") {
+                        let inline = trimmed.dropFirst(9).trimmingCharacters(in: CharacterSet(charactersIn: " []\"'"))
+                        if inline.isEmpty {
+                            inTriggersBlock = true
+                        } else {
+                            inTriggersBlock = false
+                            let extras = inline
+                                .split(separator: ",")
+                                .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " \"'")) }
+                                .filter { !$0.isEmpty }
+                            triggers.append(contentsOf: extras)
+                        }
+                    } else if inTriggersBlock && trimmed.hasPrefix("-") {
+                        let val = trimmed.dropFirst().trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                        if !val.isEmpty { triggers.append(val) }
+                    } else if !trimmed.isEmpty && trimmed.contains(":") {
+                        inTriggersBlock = false
                     }
                 }
             }
         }
-        return AgentSkill(id: slug, name: name, description: desc, body: body, sourcePath: path, isEnabled: false, triggers: [slug, "/\(slug)"])
+        let uniqueTriggers = Array(Set(triggers)).sorted()
+        return AgentSkill(id: slug, name: name, description: desc, body: body, sourcePath: path, isEnabled: false, triggers: uniqueTriggers)
     }
 
     static func builtInSkills() -> [AgentSkill] {
@@ -287,6 +347,18 @@ enum OpenClawWorkspaceService {
                 4. Uygunsa `install_github_skill` ile SKILL.md olarak kur veya `create_connector` ile bağla; yalnızca uygun hazır çözüm yoksa 0'dan `create_skill` / `create_connector` üret.
                 """,
                 sourcePath: "Dahili", isEnabled: true, triggers: ["skill", "connector", "mcp", "github", "hostinger", "entegrasyon", "araç", "ekle", "bul", "web"]
+            ),
+            AgentSkill(
+                id: "caveman", name: "Caveman Sıkıştırma Modu",
+                description: "Kod, komut ve dosya yollarını koruyarak yanıt token kullanımını %35-80 azaltır.",
+                body: "Selamlama ve dolgu cümlelerini atla. Doğrudan sonuç, neden ve sonraki adımı ver; kod blokları, dosya yolları ve olumsuzlukları (`not`, `değil`, `asla`) birebir koru.",
+                sourcePath: "Dahili", isEnabled: true, triggers: ["caveman", "kısa", "özet", "sıkıştır", "token"]
+            ),
+            AgentSkill(
+                id: "swarms", name: "Swarms Çoklu Ajan Orkestrasyonu",
+                description: "Swarms çerçevesiyle SequentialWorkflow, ConcurrentWorkflow, GraphWorkflow ve HierarchicalSwarm kurar.",
+                body: "Çoklu ajan akışı kurarken Swarms Agent primitifini kullan; yerel köprü (swarms_bridge.py) üzerinden güvenli görev dağıtımı ve özet doğrulaması yap.",
+                sourcePath: "Dahili", isEnabled: true, triggers: ["swarms", "swarm", "workflow", "orkestrasyon", "multi-agent", "ajanlar"]
             )
         ]
     }
@@ -1649,7 +1721,14 @@ enum PowerShellTools {
 
     private static func resolveSelfProjectDirectory(preferred: String?) -> String? {
         let fm = FileManager.default
-        let candidates = [preferred, AppConfig.detectDefaultWorkspacePath(), "/Volumes/DATA/Builds/ClawOffice"].compactMap { $0 }
+        let bundleParent = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().path
+        let candidates = [
+            preferred,
+            AppConfig.detectDefaultWorkspacePath(),
+            fm.currentDirectoryPath,
+            bundleParent,
+            "/Volumes/DATA/Builds/ClawOffice"
+        ].compactMap { $0 }
         for cand in candidates where !cand.isEmpty {
             let pkg = URL(fileURLWithPath: cand).appendingPathComponent("Package.swift").path
             let script = URL(fileURLWithPath: cand).appendingPathComponent("build_app.sh").path
@@ -1670,7 +1749,7 @@ enum PowerShellTools {
         }
         let pid = ProcessInfo.processInfo.processIdentifier
         let quotedDir = shellSingleQuoted(projectDir)
-        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; cd \(quotedDir) && ./build_app.sh --skip-build > /tmp/clawoffice-rebuild.log 2>&1"
+        let script = "while kill -0 \(pid) 2>/dev/null; do sleep 0.2; done; cd \(quotedDir) && /bin/bash ./build_app.sh --skip-build > /tmp/clawoffice-rebuild.log 2>&1"
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-c", script]

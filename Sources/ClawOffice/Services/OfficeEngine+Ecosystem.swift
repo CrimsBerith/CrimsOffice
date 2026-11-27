@@ -92,12 +92,15 @@ extension OfficeEngine {
             openClawHome: openClawHomePath
         )
         if res.succeeded {
-            refreshWorkspaceAndSkills()
-            let slug = deriveSkillSlug(from: source, override: slugOverride)
-            if let idx = skills.firstIndex(where: { $0.id.lowercased() == slug.lowercased() }) {
-                skills[idx].isEnabled = true
-                saveConfig()
-            }
+            let installedSlug: String = {
+                if let path = res.installedPath, !path.isEmpty {
+                    return URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
+                }
+                return deriveSkillSlug(from: source, override: slugOverride)
+            }()
+            let keepEnabled = Set(skills.filter { $0.isEnabled }.map { $0.id } + [installedSlug])
+            refreshWorkspaceAndSkills(enabledIds: keepEnabled)
+            saveConfig()
             log(.info, source: "GitHub Skill", res.message)
         } else {
             log(.warning, source: "GitHub Skill", res.message)

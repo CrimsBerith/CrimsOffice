@@ -1922,4 +1922,250 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         XCTAssertEqual(engine.workspacePath, secondWS.path)
         XCTAssertNil(engine.agents[0].agyConversationId, "Switching workspace must clear stale agy session")
     }
+
+    func testChatDisplayCompactorFoldsLongProseCodeBlocksTablesAndTools() {
+        // 1. Short reply stays inline (not collapsed)
+        let short = "Derleme geçti, 37 test başarılı."
+        XCTAssertFalse(ChatDisplayCompactor.isLong(short))
+
+        // 2. Long multi-line prose collapses to max 3 lines & <= 181 chars
+        let longProse = (1...12).map { "Satır \($0): ClawOffice modül incelemesi tamamlandı ve tüm doğrulamalar geçti." }.joined(separator: "\n")
+        XCTAssertTrue(ChatDisplayCompactor.isLong(longProse))
+        let preview = ChatDisplayCompactor.collapsedPreview(for: longProse)
+        XCTAssertLessThanOrEqual(preview.components(separatedBy: "\n").count, 4)
+        XCTAssertLessThanOrEqual(preview.count, 185)
+        XCTAssertTrue(preview.hasSuffix("…"))
+
+        // 3. Fenced code block (closed & unclosed) folds into compact badge without leaking backticks
+        let withCode = """
+        > ⚡️ **Otomatik Devralma:** `EVREN / glm-5.3` yerine `EVREN / deepseek` görevi devraldı.
+
+        Çözüm uygulandı:
+        ```swift
+        func greet() {
+            print("hello")
+            print("world")
+        }
+        ```
+        """
+        XCTAssertTrue(ChatDisplayCompactor.isLong(withCode))
+        let codePreview = ChatDisplayCompactor.collapsedPreview(for: withCode)
+        XCTAssertFalse(codePreview.contains("Otomatik Devralma"), "Redundant failover banner skipped when prose follows")
+        XCTAssertFalse(codePreview.contains("```"), "Raw code fence must not leak into collapsed preview")
+        XCTAssertTrue(codePreview.contains("[swift · 4 satır]"))
+
+        // 4. Markdown table folds into compact badge (including short spaced-pipe tables)
+        let shortSpacedTable = "| Dosya | Durum |\n| --- | --- |\n| A.swift | OK |"
+        XCTAssertTrue(ChatDisplayCompactor.isLong(shortSpacedTable))
+        XCTAssertFalse(ChatDisplayCompactor.isLong("Kısa satır ```inline``` örnek"))
+        XCTAssertFalse(ChatDisplayCompactor.isLong("\n\n\n\n\n"))
+
+        let withTable = """
+        Özet:
+        | Dosya | Durum |
+        | --- | --- |
+        | A.swift | OK |
+        | B.swift | OK |
+        """
+        XCTAssertTrue(ChatDisplayCompactor.isLong(withTable))
+        let tablePreview = ChatDisplayCompactor.collapsedPreview(for: withTable)
+        XCTAssertTrue(tablePreview.contains("[tablo · 2 satır]"))
+
+        // 5. Tool calls summary formats single & multi-tool runs compactly
+        let single = [ToolCallRecord(name: "read_file", argument: "Sources/ClawOffice/Views/\nAgentInspectorView.swift", output: "ok", succeeded: true)]
+        XCTAssertEqual(ChatDisplayCompactor.toolCallsSummary(single), "read_file · Sources/ClawOffice/Views/ …")
+        let multi = [
+            ToolCallRecord(name: "list_dir", argument: ".", output: "ok", succeeded: true),
+            ToolCallRecord(name: "swift_test", argument: "rtk swift test", output: "ok", succeeded: true)
+        ]
+        XCTAssertEqual(ChatDisplayCompactor.toolCallsSummary(multi), "2 araç çalıştırıldı · son: swift_test")
+    }
+
+    @MainActor
+    func testSkillDiscoveryPreservesBuiltInTriggersAndParsesYAMLTriggers() throws {
+        let home = tmpOpenClaw.path
+        OpenClawWorkspaceService.ensureOpenClawWorkspaceExists(at: home)
+
+        let path = try OpenClawWorkspaceService.saveEvolvedSkill(
+            slug: "swift-audit",
+            name: "Swift Audit Custom",
+            description: "Özel Swift denetim kuralı",
+            body: "Tüm @MainActor çağrılarını doğrula.",
+            openClawHome: home,
+            triggers: ["concurrency", "sendable"]
+        )
+        XCTAssertTrue(path.hasSuffix("swift-audit/SKILL.md"))
+
+        let discovered = OpenClawWorkspaceService.discoverSkills(openClawHome: home, workspacePath: tmpWorkspace.path)
+        let swiftAudit = try XCTUnwrap(discovered.first(where: { $0.id == "swift-audit" }))
+        XCTAssertTrue(swiftAudit.isEnabled, "Built-in enabled state should be preserved when overridden on disk")
+        XCTAssertTrue(swiftAudit.triggers.contains("swiftui"), "Built-in triggers must not be wiped out")
+        XCTAssertTrue(swiftAudit.triggers.contains("concurrency"), "YAML frontmatter triggers must be parsed")
+        XCTAssertTrue(swiftAudit.triggers.contains("sendable"))
+
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: home
+        )
+        guard engine.agents.count >= 2 else { return }
+        let first = engine.agents[0]
+        let second = engine.agents[1]
+        let resolved = engine.resolveNonOverlappingTarget(second.currentPosition, for: first.id)
+        let sep = hypot(resolved.x - second.currentPosition.x, resolved.y - second.currentPosition.y)
+        XCTAssertGreaterThanOrEqual(sep, 0.05, "Walking agents should separate instead of stacking on the exact same spot")
+    }
+
+    @MainActor
+    func testSkillTogglePersistenceDeleteCustomSkillAndFloorZoneClassification() throws {
+        let home = tmpOpenClaw.path
+        OpenClawWorkspaceService.ensureOpenClawWorkspaceExists(at: home)
+
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: home
+        )
+
+        // 1. Disabling a built-in skill must persist across refreshWorkspaceAndSkills()
+        let swiftSkill = try XCTUnwrap(engine.skills.first(where: { $0.id == "swift-audit" }))
+        let wasEnabled = swiftSkill.isEnabled
+        engine.toggleSkill(id: "swift-audit")
+        engine.refreshWorkspaceAndSkills()
+        let afterRefresh = try XCTUnwrap(engine.skills.first(where: { $0.id == "swift-audit" }))
+        XCTAssertEqual(afterRefresh.isEnabled, !wasEnabled, "Toggled built-in skill state must persist across refresh")
+
+        // 2. Creating and safely deleting a custom disk skill
+        let customPath = try OpenClawWorkspaceService.saveEvolvedSkill(
+            slug: "temp-custom-skill",
+            name: "Temp Custom",
+            description: "Geçici beceri",
+            body: "Test gövdesi",
+            openClawHome: home,
+            triggers: ["gecici"]
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: customPath))
+        try OpenClawWorkspaceService.deleteCustomSkill(at: customPath, openClawHome: home)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: customPath))
+
+        // 3. Built-in skills cannot be deleted
+        XCTAssertThrowsError(try OpenClawWorkspaceService.deleteCustomSkill(at: "Dahili", openClawHome: home))
+
+        // 4. Interactive click-to-walk floor zone classification
+        let desk = Point2D(x: 0.22, y: 0.25)
+        XCTAssertEqual(OfficeEngine.classifyFloorZone(for: Point2D(x: 0.20, y: 0.78), deskPosition: desk).zone, .coffeeLounge)
+        XCTAssertEqual(OfficeEngine.classifyFloorZone(for: Point2D(x: 0.80, y: 0.78), deskPosition: desk).zone, .serverRack)
+        XCTAssertEqual(OfficeEngine.classifyFloorZone(for: Point2D(x: 0.50, y: 0.50), deskPosition: desk).zone, .meetingRoom)
+        XCTAssertEqual(OfficeEngine.classifyFloorZone(for: Point2D(x: 0.23, y: 0.26), deskPosition: desk).zone, .desk)
+    }
+
+    @MainActor
+    func testLiveWalkKinematicsMidWalkRetargetingAndCronFirstRunScheduling() throws {
+        // 1. AgentWalkMotion smooth curved path & stride ramp
+        let start = Date()
+        let motion = AgentWalkMotion(
+            from: Point2D(x: 0.20, y: 0.25),
+            to: Point2D(x: 0.80, y: 0.75),
+            startedAt: start,
+            duration: 2.0,
+            arcBend: 0.025
+        )
+        let s0 = motion.sample(at: start)
+        let sMid = motion.sample(at: start.addingTimeInterval(1.0))
+        let sEnd = motion.sample(at: start.addingTimeInterval(2.5))
+        XCTAssertEqual(s0.point.x, 0.20, accuracy: 0.01)
+        XCTAssertGreaterThan(sMid.point.x, 0.40)
+        XCTAssertLessThan(sMid.point.x, 0.60)
+        XCTAssertGreaterThan(sMid.strideIntensity, 0.9)
+        XCTAssertEqual(sEnd.point.x, 0.80, accuracy: 0.005)
+        XCTAssertEqual(sEnd.strideIntensity, 0.0, accuracy: 0.001)
+
+        // 2. Mid-walk retargeting must use live visual position (no moonwalk)
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path
+        )
+        let agent = try XCTUnwrap(engine.agents.first)
+        engine.moveAgent(agent.id, to: Point2D(x: 0.85, y: 0.72), zone: .serverRack)
+        XCTAssertNotNil(engine.activeWalkMotions[agent.id])
+        let liveBeforeRedirect = engine.visualPosition(for: agent.id)
+        if liveBeforeRedirect.x < 0.65 {
+            engine.moveAgent(agent.id, to: Point2D(x: 0.70, y: 0.50), zone: .meetingRoom)
+            XCTAssertEqual(engine.agentFacingLeft[agent.id], false, "Mid-walk retarget to right of live visual position must face right")
+        }
+
+        // 3. Cron job backward-compatible decoding (legacy JSON without createdAt) & first-run firing
+        let legacyJSON = """
+        {"id":"11111111-1111-1111-1111-111111111111","name":"Legacy Cron","prompt":"Check","targetAgentName":"Atlas","intervalMinutes":5,"isEnabled":true}
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(OfficeCronJob.self, from: legacyJSON)
+        XCTAssertEqual(decoded.name, "Legacy Cron")
+        XCTAssertNil(decoded.lastRunAt)
+
+        var dueJob = OfficeCronJob(
+            name: "Auto First Run",
+            prompt: "Selam",
+            targetAgentName: agent.name,
+            intervalMinutes: 1,
+            isEnabled: true,
+            createdAt: Date().addingTimeInterval(-120)
+        )
+        dueJob.lastRunAt = nil
+        engine.cronJobs = [dueJob]
+        engine.tickDueCronJobs()
+        XCTAssertNotNil(engine.cronJobs.first?.lastRunAt, "Newly created cron job must fire automatically once intervalMinutes elapses")
+    }
+
+    @MainActor
+    func testDeleteCancelAndResetCleanWalkStateAndMutualPeerFacing() throws {
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path
+        )
+        let provId = try XCTUnwrap(engine.providers.first?.id)
+        _ = engine.addAgent(
+            name: "LunaTest", title: "QA", emoji: "✨", accentHex: "#EC4899",
+            providerId: provId, modelId: "auto", systemPrompt: "Test", temperature: 0.3
+        )
+        XCTAssertGreaterThanOrEqual(engine.agents.count, 2)
+        let a = engine.agents[0]
+        let b = engine.agents[1]
+
+        // 1. Mutual facing turns left agent right and right agent left
+        engine.agents[0].currentPosition = Point2D(x: 0.25, y: 0.40)
+        engine.agents[1].currentPosition = Point2D(x: 0.75, y: 0.40)
+        engine.updateMutualFacing(between: a.id, and: b.id)
+        XCTAssertEqual(engine.agentFacingLeft[a.id], false)
+        XCTAssertEqual(engine.agentFacingLeft[b.id], true)
+
+        // 2. Active walk + beam + packet must be completely purged on deleteAgent
+        engine.moveAgent(b.id, to: Point2D(x: 0.30, y: 0.72), zone: .coffeeLounge)
+        engine.showBeam(from: a.id, to: b.id, label: "Test", accentHex: "#E11D48", duration: 10)
+        engine.emitFlyingPacket(from: a.id, to: b.id, label: "Pkt", accentHex: "#E11D48", duration: 10)
+        XCTAssertNotNil(engine.activeWalkMotions[b.id])
+        XCTAssertTrue(engine.walkingAgentIds.contains(b.id))
+
+        engine.deleteAgent(id: b.id)
+        XCTAssertNil(engine.activeWalkMotions[b.id])
+        XCTAssertFalse(engine.walkingAgentIds.contains(b.id))
+        XCTAssertNil(engine.agentFacingLeft[b.id])
+        XCTAssertFalse(engine.activeBeams.contains(where: { $0.fromAgentId == b.id || $0.toAgentId == b.id }))
+        XCTAssertFalse(engine.flyingPackets.contains(where: { $0.fromAgentId == b.id || $0.toAgentId == b.id }))
+
+        // 3. cancelTask & resetToSingleAgentOffice leave zero orphan walk motions
+        engine.moveAgent(a.id, to: Point2D(x: 0.78, y: 0.72), zone: .serverRack)
+        XCTAssertNotNil(engine.activeWalkMotions[a.id])
+        engine.cancelTask(for: a.id)
+        XCTAssertNil(engine.activeWalkMotions[a.id])
+        XCTAssertFalse(engine.walkingAgentIds.contains(a.id))
+
+        engine.moveAgent(a.id, to: Point2D(x: 0.78, y: 0.72), zone: .serverRack)
+        engine.resetToSingleAgentOffice()
+        XCTAssertTrue(engine.activeWalkMotions.isEmpty)
+        XCTAssertTrue(engine.walkingAgentIds.isEmpty)
+        XCTAssertTrue(engine.activeBeams.isEmpty)
+        XCTAssertTrue(engine.flyingPackets.isEmpty)
+    }
 }

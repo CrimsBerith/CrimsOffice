@@ -189,22 +189,18 @@ extension OfficeEngine {
 
     func startCronSchedulerLoop() {
         cronTimer?.invalidate()
-        cronTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tickDueCronJobs() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        cronTimer = timer
     }
 
-    func tickDueCronJobs() {
-        let now = Date()
+    func tickDueCronJobs(now: Date = Date()) {
         for idx in cronJobs.indices where cronJobs[idx].isEnabled {
             let intervalSec = TimeInterval(max(1, cronJobs[idx].intervalMinutes) * 60)
-            let due: Bool
-            if let last = cronJobs[idx].lastRunAt {
-                due = now.timeIntervalSince(last) >= intervalSec
-            } else {
-                due = false
-            }
-            if due {
+            let anchor = cronJobs[idx].lastRunAt ?? cronJobs[idx].createdAt
+            if now.timeIntervalSince(anchor) >= intervalSec {
                 runCronJobNow(id: cronJobs[idx].id)
             }
         }

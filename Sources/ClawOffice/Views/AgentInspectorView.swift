@@ -1,8 +1,160 @@
 import SwiftUI
 import AppKit
 
+/// Pure helpers for keeping chat message previews and tool-call summaries compact in the inspector.
+enum ChatDisplayCompactor {
+    static func isLong(_ rawDisplay: String) -> Bool {
+        let normalized = rawDisplay
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        if normalized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+        if normalized.count > 220 { return true }
+        let newlines = normalized.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
+        if newlines >= 4 { return true }
+        let lines = normalized.components(separatedBy: "\n")
+        for (idx, line) in lines.enumerated() {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("```") || t.hasPrefix("~~~") { return true }
+            if t.hasPrefix("|"), idx + 1 < lines.count {
+                let nextT = lines[idx + 1].trimmingCharacters(in: .whitespaces)
+                let sep = nextT.replacingOccurrences(of: "|", with: "").trimmingCharacters(in: .whitespaces)
+                if nextT.hasPrefix("|"), !sep.isEmpty, sep.allSatisfy({ $0 == "-" || $0 == ":" || $0 == " " }) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    static func compactMetaLabel(for rawDisplay: String) -> String {
+        let normalized = rawDisplay
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let count = normalized.count
+        let lines = max(1, normalized.components(separatedBy: "\n").count)
+        let charStr = count >= 1000
+            ? String(format: "%.1fK kr", Double(count) / 1000.0)
+            : "\(count) kr"
+        return "\(charStr) · \(lines) satır"
+    }
+
+    static func toolCallsSummary(_ calls: [ToolCallRecord]) -> String {
+        guard !calls.isEmpty else { return "" }
+        if calls.count == 1 {
+            let call = calls[0]
+            let arg = call.argument
+                .components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            if arg.isEmpty || arg == "." {
+                return "1 araç: \(call.name)"
+            }
+            let shortArg = arg.count > 26 ? String(arg.prefix(26)) + "…" : arg
+            return "\(call.name) · \(shortArg)"
+        }
+        let last = calls.last?.name ?? ""
+        return "\(calls.count) araç çalıştırıldı · son: \(last)"
+    }
+
+    static func collapsedPreview(for rawDisplay: String, maxLines: Int = 3, maxChars: Int = 180) -> String {
+        let normalized = rawDisplay
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return rawDisplay }
+
+        var lines = normalized.components(separatedBy: "\n")
+
+        // Skip redundant failover banner lines when actual prose follows (footer badge already shows model switch)
+        var nonBannerStart = 0
+        while nonBannerStart < lines.count {
+            let t = lines[nonBannerStart].trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("> ⚡️ **Otomatik Devralma:**") || t.isEmpty {
+                nonBannerStart += 1
+            } else {
+                break
+            }
+        }
+        if nonBannerStart > 0 && nonBannerStart < lines.count {
+            lines = Array(lines.dropFirst(nonBannerStart))
+        }
+
+        // Fold fenced code blocks and markdown tables into single-line inline badges
+        var folded: [String] = []
+        var idx = 0
+        while idx < lines.count {
+            let trimmed = lines[idx].trimmingCharacters(in: .whitespaces)
+            if let fence = trimmed.first, fence == "`" || fence == "~" {
+                let runLen = trimmed.prefix(while: { $0 == fence }).count
+                if runLen >= 3 {
+                    let lang = String(trimmed.dropFirst(runLen)).trimmingCharacters(in: .whitespaces)
+                    idx += 1
+                    var codeLineCount = 0
+                    while idx < lines.count {
+                        let inner = lines[idx].trimmingCharacters(in: .whitespaces)
+                        if inner.first == fence,
+                           inner.prefix(while: { $0 == fence }).count >= runLen,
+                           inner.dropFirst(inner.prefix(while: { $0 == fence }).count).trimmingCharacters(in: .whitespaces).isEmpty {
+                            idx += 1
+                            break
+                        }
+                        codeLineCount += 1
+                        idx += 1
+                    }
+                    let label = lang.isEmpty ? "kod" : lang
+                    folded.append("`[\(label) · \(max(1, codeLineCount)) satır]`")
+                    continue
+                }
+            }
+
+            if trimmed.hasPrefix("|"), idx + 1 < lines.count {
+                let nextTrimmed = lines[idx + 1].trimmingCharacters(in: .whitespaces)
+                let strippedSep = nextTrimmed.replacingOccurrences(of: "|", with: "").trimmingCharacters(in: .whitespaces)
+                if nextTrimmed.hasPrefix("|"), !strippedSep.isEmpty, strippedSep.allSatisfy({ $0 == "-" || $0 == ":" || $0 == " " }) {
+                    idx += 2
+                    var rowCount = 0
+                    while idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).hasPrefix("|") {
+                        rowCount += 1
+                        idx += 1
+                    }
+                    folded.append("`[tablo · \(max(1, rowCount)) satır]`")
+                    continue
+                }
+            }
+
+            if !trimmed.isEmpty {
+                folded.append(lines[idx])
+            }
+            idx += 1
+        }
+
+        let sourceLines = folded.isEmpty ? lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty } : folded
+        let head = Array(sourceLines.prefix(maxLines)).joined(separator: "\n")
+        let droppedLines = sourceLines.count > maxLines
+
+        if head.count > maxChars {
+            var prefix = String(head.prefix(maxChars))
+            if let lastSpace = prefix.lastIndex(where: { $0 == " " || $0 == "\n" }),
+               prefix.distance(from: prefix.startIndex, to: lastSpace) > maxChars / 2 {
+                prefix = String(prefix[..<lastSpace])
+            }
+            // Avoid slicing inside an inline `[...]` badge leaving an unclosed backtick
+            if prefix.filter({ $0 == "`" }).count % 2 == 1,
+               let lastTick = prefix.lastIndex(of: "`") {
+                let beforeTick = String(prefix[..<lastTick]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !beforeTick.isEmpty {
+                    prefix = beforeTick
+                }
+            }
+            return prefix.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+        }
+        return head + (droppedLines ? "\n…" : "")
+    }
+}
+
 struct ToolCallBadgeView: View {
     let call: ToolCallRecord
+    var collapseEpoch: Int = 0
     @State private var isExpanded = false
 
     var toolIcon: String {
@@ -21,17 +173,24 @@ struct ToolCallBadgeView: View {
         case "system_info": return "cpu.fill"
         case "open_app": return "macwindow"
         case "open_path": return "folder.badge.gearshape"
+        case "browser_open", "browser_navigate", "browser_goto", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_wait", "browser_eval", "browser_screenshot", "browser_handoff":
+            return "safari.fill"
+        case "run_swarm", "swarm_status": return "hexagon.fill"
+        case "list_connectors", "use_connector", "create_connector": return "cable.connector"
+        case "search_github", "inspect_github_repo", "install_github_skill": return "chevron.left.forwardslash.chevron.right"
+        case "create_skill": return "sparkles.square.filled.on.square"
         default: return "wrench.and.screwdriver.fill"
         }
     }
 
     var accentColor: Color {
         switch call.name {
-        case "hire_agent", "delegate", "assign_task": return .purple
-        case "write_file", "patch_file", "multi_patch", "write_to_file", "replace_file_content", "multi_replace_file_content": return .green
+        case "hire_agent", "delegate", "assign_task", "run_swarm", "swarm_status": return .purple
+        case "write_file", "patch_file", "multi_patch", "write_to_file", "replace_file_content", "multi_replace_file_content", "create_skill", "install_github_skill": return .green
         case "shell", "run_command", "system_info", "build_gate": return .orange
-        case "read_file", "view_file", "list_dir", "grep_search", "search_code", "find_by_name", "find_files", "glob", "git_status", "git_diff": return .blue
-        case "graphify_query", "graphify_update": return .cyan
+        case "read_file", "view_file", "list_dir", "grep_search", "search_code", "find_by_name", "find_files", "glob", "git_status", "git_diff", "search_github", "inspect_github_repo": return .blue
+        case "graphify_query", "graphify_update", "graphify_path", "browser_open", "browser_navigate", "browser_goto", "browser_snapshot", "browser_click", "browser_type", "browser_select", "browser_scroll", "browser_wait", "browser_eval", "browser_screenshot", "browser_handoff": return .cyan
+        case "list_connectors", "use_connector", "create_connector": return .teal
         default: return .secondary
         }
     }
@@ -46,17 +205,17 @@ struct ToolCallBadgeView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: 5) {
                     Image(systemName: call.succeeded ? toolIcon : "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(effectiveColor)
                     Text(call.name)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     if !call.argument.isEmpty && call.argument != "." {
                         Text(call.argument)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.system(size: 9.5, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -70,24 +229,29 @@ struct ToolCallBadgeView: View {
                             Text(isExpanded ? "Gizle" : "Çıktı")
                                 .font(.system(size: 9, weight: .medium))
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 8.5, weight: .semibold))
                         }
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
                 }
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .liquidGlassCard(cornerRadius: 10, tint: effectiveColor, interactive: !call.output.isEmpty)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .liquidGlassCard(cornerRadius: 8, tint: effectiveColor, interactive: !call.output.isEmpty)
             }
             .buttonStyle(.plain)
 
             if isExpanded && !call.output.isEmpty {
-                SmokedGlassSurface(cornerRadius: 10) {
+                let outLines = max(1, call.output.components(separatedBy: "\n").count)
+                let previewOut = call.output.count > 6_000
+                    ? String(call.output.prefix(6_000)) + "\n… (+\(call.output.count - 6_000) kr; tamamı için Kopyala)"
+                    : call.output
+                SmokedGlassSurface(cornerRadius: 8) {
                     VStack(spacing: 0) {
                         HStack(spacing: 5) {
-                            Circle().fill(Color.red.opacity(0.85)).frame(width: 7, height: 7)
-                            Circle().fill(Color.yellow.opacity(0.85)).frame(width: 7, height: 7)
-                            Circle().fill(Color.green.opacity(0.85)).frame(width: 7, height: 7)
-                            Text("Terminal Çıktısı · \(call.name)")
+                            Circle().fill(Color.red.opacity(0.85)).frame(width: 6, height: 6)
+                            Circle().fill(Color.yellow.opacity(0.85)).frame(width: 6, height: 6)
+                            Circle().fill(Color.green.opacity(0.85)).frame(width: 6, height: 6)
+                            Text("Çıktı · \(call.name) · \(outLines) satır")
                                 .font(.system(size: 9, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.70))
                                 .padding(.leading, 4)
@@ -106,23 +270,26 @@ struct ToolCallBadgeView: View {
                             }
                             .buttonStyle(.plain)
                         }
-                        .padding(.horizontal, 9).padding(.vertical, 6)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
                         .background(Color.white.opacity(0.05))
 
                         Divider().background(Color.white.opacity(0.1))
 
                         ScrollView {
-                            Text(call.output)
+                            Text(previewOut)
                                 .font(.system(size: 10, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
+                                .padding(7)
                         }
-                        .frame(maxHeight: 185)
+                        .frame(maxHeight: 150)
                         .foregroundStyle(Color(red: 0.48, green: 0.94, blue: 0.60))
                     }
                 }
             }
+        }
+        .onChange(of: collapseEpoch) { _, _ in
+            isExpanded = false
         }
     }
 }
@@ -130,91 +297,91 @@ struct ToolCallBadgeView: View {
 struct ChatMessageBubbleView: View {
     let msg: ChatMessage
     let agent: OfficeAgent
+    var collapseEpoch: Int = 0
     @State private var isExpanded = false
+    @State private var showToolCalls = false
+    @State private var showReasoning = false
 
     private var isSummary: Bool {
         ContextCompactor.isSummaryMessage(msg)
     }
 
-    private var isLongMessage: Bool {
-        let nl = msg.content.reduce(into: 0) { if $1 == "\n" { $0 += 1 } }
-        return msg.content.count > 420 || nl >= 7
-    }
-
     var body: some View {
-        VStack(alignment: msg.role == "user" ? .trailing : .leading, spacing: 6) {
+        let isStreamingLast = agent.status.isBusy && msg.id == agent.messages.last?.id
+        let clean = PowerShellTools.stripToolTags(from: msg.content, stripTrailingIncomplete: isStreamingLast)
+        let rawDisplay: String = {
+            if !clean.isEmpty { return clean }
+            if msg.content.isEmpty { return "Yanıt üretiliyor..." }
+            if isStreamingLast { return "⚡️ *Araç adımı hazırlanıyor...*" }
+            return msg.toolCalls.isEmpty ? msg.content : "⚡️ *Araç adımları tamamlandı.*"
+        }()
+        let isLongMessage = ChatDisplayCompactor.isLong(rawDisplay)
+        let displayText = (isLongMessage && !isExpanded)
+            ? ChatDisplayCompactor.collapsedPreview(for: rawDisplay)
+            : rawDisplay
+
+        VStack(alignment: msg.role == "user" ? .trailing : .leading, spacing: 4) {
             if isSummary {
                 summaryCollapsibleCard
             } else {
                 // Deep Reasoning Box (if available)
                 if let r = msg.reasoning, !r.isEmpty {
-                    DisclosureGroup {
+                    DisclosureGroup(isExpanded: $showReasoning) {
                         ScrollView {
                             Text(r)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(8)
+                                .padding(7)
                         }
-                        .frame(maxHeight: 220)
+                        .frame(maxHeight: 180)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
                     } label: {
-                        Label("Derin Akıl Yürütme (\(r.count) karakter)", systemImage: "brain.head.profile")
-                            .font(.caption.bold())
+                        Label("Akıl Yürütme (\(r.count) kr)", systemImage: "brain.head.profile")
+                            .font(.system(size: 10.5, weight: .semibold))
                             .foregroundStyle(.purple)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 1)
                 }
 
-                // Interactive Tool Execution Badges
+                // Grouped Collapsible Tool Execution Summary
                 if !msg.toolCalls.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(msg.toolCalls) { call in
-                            ToolCallBadgeView(call: call)
-                        }
-                    }
+                    toolCallsGroupSection
                 }
 
                 // Main Message Content
-                let clean = PowerShellTools.stripToolTags(from: msg.content)
-                let rawDisplay = clean.isEmpty
-                    ? (msg.content.isEmpty ? "Yanıt üretiliyor..." : (msg.toolCalls.isEmpty ? msg.content : "⚡️ *Araç adımları tamamlandı.*"))
-                    : clean
-                let clippedDisplay: String = {
-                    guard isLongMessage && !isExpanded else { return rawDisplay }
-                    let lines = rawDisplay.components(separatedBy: "\n")
-                    let headLines = Array(lines.prefix(5)).joined(separator: "\n")
-                    if headLines.count > 320 {
-                        return String(headLines.prefix(320)) + "…"
-                    }
-                    return headLines + (lines.count > 5 ? "\n…" : "")
-                }()
-
-                messageBubbleContent(displayText: clippedDisplay, fullLength: rawDisplay.count)
+                messageBubbleContent(
+                    displayText: displayText,
+                    isLongMessage: isLongMessage,
+                    metaLabel: ChatDisplayCompactor.compactMetaLabel(for: rawDisplay)
+                )
 
                 // Assistant Footer Metadata
                 if msg.role != "user", let m = msg.modelUsed {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         if msg.usedFallback {
-                            Text("⚡️ Devraldı: \(m)")
+                            Text("⚡️ \(m)")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundStyle(.orange)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .padding(.horizontal, 5).padding(.vertical, 1.5)
                                 .liquidGlassCapsule(tint: .orange, interactive: false)
                         } else {
                             Text("\(msg.providerName ?? "") · \(m)")
-                                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                         if let ms = msg.latencyMs {
-                            Text("· \(ms) ms").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                            Text("· \(ms) ms").font(.system(size: 9.5, design: .monospaced)).foregroundStyle(.secondary)
                         }
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(msg.content, forType: .string)
                         } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: "doc.on.doc").font(.system(size: 9))
+                            HStack(spacing: 2) {
+                                Image(systemName: "doc.on.doc").font(.system(size: 8.5))
                                 Text("Kopyala").font(.system(size: 9))
                             }
                         }
@@ -225,19 +392,89 @@ struct ChatMessageBubbleView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: (msg.role == "user" && !isSummary) ? .trailing : .leading)
+        .onChange(of: collapseEpoch) { _, _ in
+            isExpanded = false
+            showToolCalls = false
+            showReasoning = false
+        }
+    }
+
+    @ViewBuilder
+    private var toolCallsGroupSection: some View {
+        let failCount = msg.toolCalls.filter { !$0.succeeded }.count
+        let okCount = msg.toolCalls.count - failCount
+        let groupTint: Color = failCount > 0 ? .orange : .secondary
+
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showToolCalls.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: failCount > 0 ? "exclamationmark.triangle.fill" : "wrench.and.screwdriver.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(failCount > 0 ? .orange : .accentColor)
+                    Text(ChatDisplayCompactor.toolCallsSummary(msg.toolCalls))
+                        .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    if okCount > 0 {
+                        Text("\(okCount) ✓")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.green)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    if failCount > 0 {
+                        Text("\(failCount) ✕")
+                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    HStack(spacing: 2) {
+                        Text(showToolCalls ? "Gizle" : "Detay")
+                            .font(.system(size: 9, weight: .medium))
+                        Image(systemName: showToolCalls ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8.5, weight: .semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .liquidGlassCard(cornerRadius: 9, tint: groupTint, interactive: true)
+            }
+            .buttonStyle(.plain)
+
+            if showToolCalls {
+                let toolList = VStack(alignment: .leading, spacing: 3) {
+                    ForEach(msg.toolCalls) { call in
+                        ToolCallBadgeView(call: call, collapseEpoch: collapseEpoch)
+                    }
+                }
+                if msg.toolCalls.count > 3 {
+                    ScrollView {
+                        toolList
+                    }
+                    .frame(maxHeight: 220)
+                } else {
+                    toolList
+                }
+            }
+        }
     }
 
     private var summaryCollapsibleCard: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
             ScrollView {
                 Text(msg.content)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 10.5, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
+                    .frame(maxWidth: msg.role == "user" ? nil : .infinity, alignment: msg.role == "user" ? .trailing : .leading)
+                    .padding(7)
             }
-            .frame(maxHeight: 220)
+            .frame(maxHeight: 180)
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         } label: {
             HStack(spacing: 6) {
@@ -245,31 +482,35 @@ struct ChatMessageBubbleView: View {
                 Text("Otomatik Bağlam Özeti (\(msg.content.count) kr)")
                     .font(.caption.bold())
                     .foregroundStyle(.teal)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .liquidGlassCard(cornerRadius: 12, tint: .teal, interactive: true)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .liquidGlassCard(cornerRadius: 11, tint: .teal, interactive: true)
     }
 
     @ViewBuilder
-    private func messageBubbleContent(displayText: String, fullLength: Int) -> some View {
-        let bodyContent = VStack(alignment: .leading, spacing: 6) {
+    private func messageBubbleContent(displayText: String, isLongMessage: Bool, metaLabel: String) -> some View {
+        let bodyContent = VStack(alignment: .leading, spacing: 5) {
             if isExpanded && isLongMessage {
                 ScrollView {
                     MarkdownMessageView(
                         text: displayText,
-                        baseFontSize: 13,
+                        baseFontSize: 12.5,
+                        compact: true,
                         textColor: msg.role == "user" ? Color.white : Color.primary
                     )
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: msg.role == "user" ? nil : .infinity, alignment: msg.role == "user" ? .trailing : .leading)
                 }
-                .frame(maxHeight: 320)
+                .frame(maxHeight: 280)
             } else {
                 MarkdownMessageView(
                     text: displayText,
-                    baseFontSize: 13,
+                    baseFontSize: 12.5,
+                    compact: true,
                     textColor: msg.role == "user" ? Color.white : Color.primary
                 )
                 .textSelection(.enabled)
@@ -277,14 +518,14 @@ struct ChatMessageBubbleView: View {
 
             if isLongMessage {
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(.easeInOut(duration: 0.16)) {
                         isExpanded.toggle()
                     }
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: isExpanded ? "chevron.up.circle.fill" : "chevron.down.circle.fill")
                             .font(.system(size: 10))
-                        Text(isExpanded ? "Mesajı Daralt" : "Tamamını Göster (\(fullLength) kr)")
+                        Text(isExpanded ? "Mesajı Daralt" : "Tamamını Göster (\(metaLabel))")
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .foregroundStyle(msg.role == "user" ? Color.white.opacity(0.92) : Color.accentColor)
@@ -292,12 +533,12 @@ struct ChatMessageBubbleView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
+        .padding(.horizontal, 11).padding(.vertical, 7)
 
         if msg.role == "user" {
             bodyContent
                 .background(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .fill(
                             LinearGradient(
                                 colors: [Color(hex: agent.accentHex), Color(hex: agent.accentHex).opacity(0.76)],
@@ -305,13 +546,13 @@ struct ChatMessageBubbleView: View {
                             )
                         )
                         .overlay(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.8)
                         )
-                        .shadow(color: Color(hex: agent.accentHex).opacity(0.32), radius: 8, y: 3)
+                        .shadow(color: Color(hex: agent.accentHex).opacity(0.28), radius: 6, y: 2)
                 )
         } else {
-            bodyContent.liquidGlassCard(cornerRadius: 16, tint: nil, interactive: false)
+            bodyContent.liquidGlassCard(cornerRadius: 14, tint: nil, interactive: false)
         }
     }
 }
@@ -322,6 +563,7 @@ struct AgentInspectorView: View {
     @State private var editingAgent: OfficeAgent? = nil
     @State private var clearConfirmAgentId: UUID? = nil
     @State private var autoFollowBottom = true
+    @State private var collapseEpoch = 0
 
     var body: some View {
         directChatBody
@@ -360,6 +602,12 @@ struct AgentInspectorView: View {
                         Text("\(agent.title) · \(agent.status.rawValue)").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    Button {
+                        collapseEpoch += 1
+                    } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
+                        .buttonStyle(.borderless)
+                        .disabled(agent.messages.isEmpty)
+                        .help("Tüm açık mesaj ve araç çıktılarını daralt")
                     Button {
                         _ = engine.compactAgentHistory(for: agent.id, force: true)
                     } label: { Image(systemName: "rectangle.compress.vertical") }
@@ -433,12 +681,12 @@ struct AgentInspectorView: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
                             ForEach(agent.messages) { msg in
-                                ChatMessageBubbleView(msg: msg, agent: agent)
+                                ChatMessageBubbleView(msg: msg, agent: agent, collapseEpoch: collapseEpoch)
                                     .id(msg.id)
                             }
-                        }.padding(12)
+                        }.padding(10)
                     }
                     .onChange(of: agent.messages.count) { _, _ in
                         if autoFollowBottom, let last = agent.messages.last?.id {

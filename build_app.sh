@@ -29,6 +29,10 @@ if [ -d ".build/release/ClawOffice_ClawOffice.bundle" ]; then
     cp -R ".build/release/ClawOffice_ClawOffice.bundle" "$APP_DIR/Contents/Resources/"
 fi
 cp -R "Sources/ClawOffice/Resources/avatars" "$APP_DIR/Contents/Resources/avatars"
+if [ -f "swarms-runtime/swarms_bridge.py" ]; then
+    mkdir -p "$APP_DIR/Contents/Resources/swarms-runtime"
+    cp "swarms-runtime/swarms_bridge.py" "$APP_DIR/Contents/Resources/swarms-runtime/"
+fi
 
 if [ -d "Assets/AppIcon.iconset" ] && command -v iconutil >/dev/null 2>&1; then
     echo "🎨 macOS AppIcon.icns (Crims Office) oluşturuluyor..."
@@ -62,7 +66,12 @@ cat > "$APP_DIR/Contents/Info.plist" << 'EOF'
 EOF
 
 mkdir -p "$HOME/.openclaw/workspace/skills"
-cp -rn Templates/workspace/skills/* "$HOME/.openclaw/workspace/skills/" 2>/dev/null || true
+for skill_dir in Templates/workspace/skills/*; do
+    [ -d "$skill_dir" ] || continue
+    slug="$(basename "$skill_dir")"
+    mkdir -p "$HOME/.openclaw/workspace/skills/$slug"
+    cp -f "$skill_dir/SKILL.md" "$HOME/.openclaw/workspace/skills/$slug/SKILL.md"
+done
 
 # Kalıcı TCC izni için geçerli Apple Development kimliği ile imzala
 DEV_IDENTITY=$(security find-identity -p codesigning -v | grep "Apple Development" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/' || true)

@@ -15,6 +15,7 @@ struct OfficeFloorView: View {
     @State private var selectedEditForDiff: FileEditRecord? = nil
     @State private var workspaceVerifyStatus: String = ""
     @State private var isRunningQuickVerify = false
+    @State private var walkDestinationMarker: (point: CGPoint, accentHex: String, id: UUID)? = nil
 
     private enum PendingSystemAction: Identifiable {
         case selfRebuild
@@ -29,11 +30,20 @@ struct OfficeFloorView: View {
     }
 
     private var selfRepoPath: String {
-        let detected = AppConfig.detectDefaultWorkspacePath()
-        if FileManager.default.fileExists(atPath: detected + "/build_app.sh") {
-            return detected
+        let fm = FileManager.default
+        let candidates = [
+            engine.workspacePath,
+            AppConfig.detectDefaultWorkspacePath(),
+            fm.currentDirectoryPath,
+            Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().path,
+            "/Volumes/DATA/Builds/ClawOffice"
+        ]
+        for path in candidates where !path.isEmpty {
+            if fm.fileExists(atPath: path + "/build_app.sh") {
+                return path
+            }
         }
-        return "/Volumes/DATA/Builds/ClawOffice"
+        return AppConfig.detectDefaultWorkspacePath()
     }
 
     var body: some View {
@@ -51,8 +61,19 @@ struct OfficeFloorView: View {
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
                         backgroundLayer
+                            .contentShape(Rectangle())
+                            .onTapGesture { location in
+                                walkSelectedAgent(toScreenPoint: location, in: geo.size)
+                            }
                         zonesLayer(size: geo.size)
                         desksLayer(size: geo.size)
+                        walkTrailsLayer(size: geo.size)
+                        if let marker = walkDestinationMarker {
+                            FloorWalkMarkerView(accent: Color(hex: marker.accentHex))
+                                .id(marker.id)
+                                .position(marker.point)
+                                .allowsHitTesting(false)
+                        }
                         beamsLayer(size: geo.size)
                         flyingPacketsLayer(size: geo.size)
                         agentsLayer(size: geo.size)
@@ -286,6 +307,38 @@ struct OfficeFloorView: View {
                         }
                         .buttonStyle(.plain)
                         .help("İllüstrasyonlu Crims Beach Stüdyo zeminini aç/kapat")
+
+                        Button {
+                            engine.tickAmbientOffice(forceStroll: true)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "figure.walk")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.pink)
+                                Text("Yürüt")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: .pink, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stüdyoda canlı yürüyüş başlat (Zeminde herhangi bir noktaya da tıklayabilirsiniz)")
+
+                        Button {
+                            engine.recallAllAgentsToDesks()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.uturn.left.circle.fill")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.secondary)
+                                Text("Masalara")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: nil, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Tüm ekibi kendi çalışma masasına geri yürüt")
 
                         ForEach(engine.providers) { p in
                             let health = engine.providerStatuses[p.id]
@@ -589,8 +642,11 @@ struct OfficeFloorView: View {
             }
         }
         .frame(width: w, height: h)
-        .liquidGlassCard(cornerRadius: 24, tint: isMeetingActive ? .accentColor : nil, interactive: false)
+        .liquidGlassCard(cornerRadius: 24, tint: isMeetingActive ? .accentColor : nil, interactive: true)
         .position(x: size.width * 0.50, y: size.height * 0.50)
+        .onTapGesture {
+            walkSelectedAgent(toNormalized: Point2D(x: 0.50, y: 0.50), in: size, zoneOverride: .meetingRoom, bubbleOverride: "📝 Toplantı odasına geçiyor")
+        }
     }
 
     private func coffeeZone(size: CGSize) -> some View {
@@ -610,8 +666,11 @@ struct OfficeFloorView: View {
         }
         .padding(.horizontal, 10)
         .frame(width: w, height: 54)
-        .liquidGlassCard(cornerRadius: 16, tint: .orange, interactive: false)
+        .liquidGlassCard(cornerRadius: 16, tint: .orange, interactive: true)
         .position(x: size.width * 0.20, y: max(40, size.height - 40))
+        .onTapGesture {
+            walkSelectedAgent(toNormalized: Point2D(x: 0.24, y: 0.78), in: size, zoneOverride: .coffeeLounge, bubbleOverride: "☕️ Kahve molasına yürüyor")
+        }
     }
 
     private func macStudioZone(size: CGSize) -> some View {
@@ -631,8 +690,51 @@ struct OfficeFloorView: View {
         }
         .padding(.horizontal, 10)
         .frame(width: w, height: 54)
-        .liquidGlassCard(cornerRadius: 16, tint: .cyan, interactive: false)
+        .liquidGlassCard(cornerRadius: 16, tint: .cyan, interactive: true)
         .position(x: size.width * 0.80, y: max(40, size.height - 40))
+        .onTapGesture {
+            walkSelectedAgent(toNormalized: Point2D(x: 0.76, y: 0.78), in: size, zoneOverride: .serverRack, bubbleOverride: "🖥️ Mac Hub kontrolüne gidiyor")
+        }
+    }
+
+    private func walkSelectedAgent(toScreenPoint location: CGPoint, in size: CGSize) {
+        guard size.width > 20, size.height > 20 else { return }
+        let norm = Point2D(
+            x: min(0.88, max(0.10, Double(location.x / size.width))),
+            y: min(0.84, max(0.15, Double(location.y / size.height)))
+        )
+        walkSelectedAgent(toNormalized: norm, in: size)
+    }
+
+    private func walkSelectedAgent(
+        toNormalized norm: Point2D,
+        in size: CGSize,
+        zoneOverride: OfficeZone? = nil,
+        bubbleOverride: String? = nil
+    ) {
+        guard let targetAgent = engine.selectedAgent ?? engine.agents.first else { return }
+        let classified = OfficeEngine.classifyFloorZone(for: norm, deskPosition: targetAgent.deskPosition)
+        let zone = zoneOverride ?? classified.zone
+        let bubble = bubbleOverride ?? classified.bubble
+
+        let markerId = UUID()
+        let screenPt = floorPoint(for: norm, in: size)
+        walkDestinationMarker = (point: screenPt, accentHex: targetAgent.accentHex, id: markerId)
+
+        engine.moveAgent(
+            targetAgent.id,
+            to: norm,
+            zone: zone,
+            status: targetAgent.status.isBusy ? nil : (zone == .desk ? .idle : .chatting),
+            bubble: bubble
+        )
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.1))
+            if walkDestinationMarker?.id == markerId {
+                walkDestinationMarker = nil
+            }
+        }
     }
 
     private func floorPoint(for pos: Point2D, in size: CGSize) -> CGPoint {
@@ -711,6 +813,46 @@ struct OfficeFloorView: View {
         }
     }
 
+    // Subtle Curved Stroll Trails showing active walking paths on the studio floor
+    private func walkTrailsLayer(size: CGSize) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: engine.activeWalkMotions.isEmpty)) { timeline in
+            let now = timeline.date
+            Canvas { ctx, canvasSize in
+                for (agentId, motion) in engine.activeWalkMotions {
+                    guard let agent = engine.agents.first(where: { $0.id == agentId }) else { continue }
+                    let currentSample = motion.sample(at: now)
+                    guard currentSample.progress < 0.98 else { continue }
+
+                    var path = Path()
+                    let steps = 16
+                    for s in 0...steps {
+                        let frac = currentSample.progress + (1.0 - currentSample.progress) * (Double(s) / Double(steps))
+                        let probeDate = motion.startedAt.addingTimeInterval(motion.duration * frac)
+                        let pt = floorPoint(for: motion.sample(at: probeDate).point, in: canvasSize)
+                        let groundPt = CGPoint(x: pt.x, y: pt.y + 24)
+                        if s == 0 {
+                            path.move(to: groundPt)
+                        } else {
+                            path.addLine(to: groundPt)
+                        }
+                    }
+
+                    let col = Color(hex: agent.accentHex)
+                    ctx.stroke(
+                        path,
+                        with: .color(col.opacity(0.36)),
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round, dash: [4, 5])
+                    )
+
+                    let endPt = floorPoint(for: motion.to, in: canvasSize)
+                    let dotRect = CGRect(x: endPt.x - 4, y: endPt.y + 22, width: 8, height: 4)
+                    ctx.fill(Path(ellipseIn: dotRect), with: .color(col.opacity(0.45)))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
     // Animated Inter-Agent Communication Beams
     private func beamsLayer(size: CGSize) -> some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: engine.activeBeams.isEmpty)) { timeline in
@@ -719,10 +861,10 @@ struct OfficeFloorView: View {
             ZStack {
                 Canvas { ctx, canvasSize in
                     for beam in engine.activeBeams {
-                        guard let fromA = engine.agents.first(where: { $0.id == beam.fromAgentId }),
-                              let toA = engine.agents.first(where: { $0.id == beam.toAgentId }) else { continue }
-                        let p1 = floorPoint(for: fromA.currentPosition, in: canvasSize)
-                        let p2 = floorPoint(for: toA.currentPosition, in: canvasSize)
+                        guard engine.agents.contains(where: { $0.id == beam.fromAgentId }),
+                              engine.agents.contains(where: { $0.id == beam.toAgentId }) else { continue }
+                        let p1 = floorPoint(for: engine.visualPosition(for: beam.fromAgentId, at: timeline.date), in: canvasSize)
+                        let p2 = floorPoint(for: engine.visualPosition(for: beam.toAgentId, at: timeline.date), in: canvasSize)
                         let a1 = CGPoint(x: p1.x, y: p1.y - 4)
                         let a2 = CGPoint(x: p2.x, y: p2.y - 4)
                         let mid = CGPoint(x: (a1.x + a2.x) / 2, y: min(a1.y, a2.y) - 36)
@@ -742,10 +884,10 @@ struct OfficeFloorView: View {
                 }
 
                 ForEach(engine.activeBeams) { beam in
-                    if let fromA = engine.agents.first(where: { $0.id == beam.fromAgentId }),
-                       let toA = engine.agents.first(where: { $0.id == beam.toAgentId }) {
-                        let p1 = floorPoint(for: fromA.currentPosition, in: size)
-                        let p2 = floorPoint(for: toA.currentPosition, in: size)
+                    if engine.agents.contains(where: { $0.id == beam.fromAgentId }),
+                       engine.agents.contains(where: { $0.id == beam.toAgentId }) {
+                        let p1 = floorPoint(for: engine.visualPosition(for: beam.fromAgentId, at: timeline.date), in: size)
+                        let p2 = floorPoint(for: engine.visualPosition(for: beam.toAgentId, at: timeline.date), in: size)
                         let labelPt = CGPoint(x: (p1.x + p2.x) / 2, y: min(p1.y - 4, p2.y - 4) - 24)
 
                         Text(beam.label)
@@ -767,12 +909,12 @@ struct OfficeFloorView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: engine.flyingPackets.isEmpty)) { timeline in
             ZStack {
                 ForEach(engine.flyingPackets) { pkt in
-                    if let fromA = engine.agents.first(where: { $0.id == pkt.fromAgentId }),
-                       let toA = engine.agents.first(where: { $0.id == pkt.toAgentId }) {
+                    if engine.agents.contains(where: { $0.id == pkt.fromAgentId }),
+                       engine.agents.contains(where: { $0.id == pkt.toAgentId }) {
                         let elapsed = max(0, timeline.date.timeIntervalSince(pkt.createdAt))
                         let t = CGFloat(min(1.0, elapsed / 2.2))
-                        let raw0 = floorPoint(for: fromA.currentPosition, in: size)
-                        let raw1 = floorPoint(for: toA.currentPosition, in: size)
+                        let raw0 = floorPoint(for: engine.visualPosition(for: pkt.fromAgentId, at: timeline.date), in: size)
+                        let raw1 = floorPoint(for: engine.visualPosition(for: pkt.toAgentId, at: timeline.date), in: size)
                         let p0 = CGPoint(x: raw0.x, y: raw0.y - 14)
                         let p1 = CGPoint(x: raw1.x, y: raw1.y - 14)
                         let ctrl = CGPoint(x: (p0.x + p1.x) / 2, y: min(p0.y, p1.y) - 48)
@@ -802,68 +944,133 @@ struct OfficeFloorView: View {
     }
 
     private func agentsLayer(size: CGSize) -> some View {
-        ForEach(engine.agents) { agent in
-            let pt = floorPoint(for: agent.currentPosition, in: size)
-            let isSelected = engine.selectedAgentId == agent.id
-            let isWalking = engine.walkingAgentIds.contains(agent.id)
-            let facingLeft = engine.agentFacingLeft[agent.id] ?? false
-            let provName = engine.provider(for: agent.providerId)?.name ?? "API"
-            let cleanBubble = agent.statusBubble.trimmingCharacters(in: .whitespacesAndNewlines)
-            VStack(spacing: 2) {
-                if !cleanBubble.isEmpty {
-                    let activeTalk = agent.status.isBusy || agent.status == .chatting || isWalking
-                    Text(cleanBubble)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 176)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .liquidGlassCard(
-                            cornerRadius: 10,
-                            tint: activeTalk ? Color(hex: agent.accentHex) : nil,
-                            interactive: false
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: engine.activeWalkMotions.isEmpty)) { timeline in
+            let now = timeline.date
+            ZStack(alignment: .topLeading) {
+                ForEach(engine.agents) { agent in
+                    let livePos = engine.visualPosition(for: agent.id, at: now)
+                    let pt = floorPoint(for: livePos, in: size)
+                    let isSelected = engine.selectedAgentId == agent.id
+                    let isWalking = engine.walkingAgentIds.contains(agent.id)
+                    let strideAmp = engine.strideIntensity(for: agent.id, at: now)
+                    let facingLeft = engine.agentFacingLeft[agent.id] ?? false
+                    let provName = engine.provider(for: agent.providerId)?.name ?? "API"
+                    let cleanBubble = agent.statusBubble.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // 60 FPS canlı perspektif: yürüdükçe yakınlaşıp büyür, uzaklaşıp küçülür
+                    let depthScale = CGFloat(0.90 + min(max(livePos.y, 0.0), 1.0) * 0.16)
+                    let spriteHeight = (isSelected ? 78.0 : 68.0) * depthScale
+
+                    VStack(spacing: 2) {
+                        if !cleanBubble.isEmpty {
+                            let activeTalk = agent.status.isBusy || agent.status == .chatting || isWalking
+                            Text(cleanBubble)
+                                .font(.system(size: 9.5, weight: .medium))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 176)
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .liquidGlassCard(
+                                    cornerRadius: 10,
+                                    tint: activeTalk ? Color(hex: agent.accentHex) : nil,
+                                    interactive: false
+                                )
+                        }
+
+                        AgentAvatarView(
+                            agent: agent,
+                            size: spriteHeight,
+                            showStatusDot: true,
+                            isSelected: isSelected,
+                            isWalking: isWalking,
+                            strideIntensity: strideAmp,
+                            facingLeft: facingLeft,
+                            mode: .floorSprite
                         )
-                }
 
-                AgentAvatarView(
-                    agent: agent,
-                    size: isSelected ? 78 : 66,
-                    showStatusDot: true,
-                    isSelected: isSelected,
-                    isWalking: isWalking,
-                    facingLeft: facingLeft,
-                    mode: .floorSprite
-                )
-
-                VStack(spacing: 1) {
-                    HStack(spacing: 3) {
-                        Text("\(agent.emoji) \(agent.name)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Text(agent.title)
-                            .font(.system(size: 7.5, weight: .medium))
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Color(hex: agent.accentHex).opacity(0.22), in: Capsule())
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: 68)
+                        VStack(spacing: 1) {
+                            HStack(spacing: 3) {
+                                Text("\(agent.emoji) \(agent.name)")
+                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                Text(agent.title)
+                                    .font(.system(size: 7.5, weight: .medium))
+                                    .padding(.horizontal, 4).padding(.vertical, 1)
+                                    .background(Color(hex: agent.accentHex).opacity(0.22), in: Capsule())
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(maxWidth: 68)
+                            }
+                            .frame(maxWidth: 140)
+                            Text("\(provName) · \(agent.modelId)")
+                                .font(.system(size: 8, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .frame(maxWidth: 138)
+                        }
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .liquidGlassCard(cornerRadius: 8, tint: isSelected ? Color(hex: agent.accentHex) : nil, interactive: true)
                     }
-                    .frame(maxWidth: 140)
-                    Text("\(provName) · \(agent.modelId)")
-                        .font(.system(size: 8, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 138)
+                    .position(x: pt.x, y: pt.y - 6)
+                    .onTapGesture(count: 2) {
+                        engine.selectedAgentId = agent.id
+                        engine.moveAgent(
+                            agent.id,
+                            to: agent.deskPosition,
+                            zone: .desk,
+                            status: agent.status.isBusy ? nil : .idle,
+                            bubble: "🚶‍♀️ Masasına dönüyor"
+                        )
+                    }
+                    .onTapGesture(count: 1) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            engine.selectedAgentId = agent.id
+                        }
+                    }
+                    .contextMenu {
+                        Button("Masasına Yürüt") {
+                            engine.selectedAgentId = agent.id
+                            engine.moveAgent(agent.id, to: agent.deskPosition, zone: .desk, status: agent.status.isBusy ? nil : .idle, bubble: "🚶‍♀️ Masasına dönüyor")
+                        }
+                        Button("Kahve Molasına Gönder") {
+                            engine.selectedAgentId = agent.id
+                            engine.moveAgent(agent.id, to: Point2D(x: 0.24, y: 0.78), zone: .coffeeLounge, status: agent.status.isBusy ? nil : .chatting, bubble: "☕️ Kahve molası")
+                        }
+                        Button("Toplantı Odasına Gönder") {
+                            engine.selectedAgentId = agent.id
+                            engine.moveAgent(agent.id, to: Point2D(x: 0.50, y: 0.50), zone: .meetingRoom, status: agent.status.isBusy ? nil : .chatting, bubble: "📝 Toplantı odasına geçiyor")
+                        }
+                        Button("Mac Studio Hub'a Gönder") {
+                            engine.selectedAgentId = agent.id
+                            engine.moveAgent(agent.id, to: Point2D(x: 0.76, y: 0.78), zone: .serverRack, status: agent.status.isBusy ? nil : .chatting, bubble: "🖥️ Mac Hub kontrolü")
+                        }
+                        Divider()
+                        Menu("Bikini Stilini Değiştir") {
+                            ForEach(OfficeAvatarPreset.allPresets) { preset in
+                                Button {
+                                    var updated = agent
+                                    updated.avatarAsset = preset.assetName
+                                    updated.accentHex = preset.accentHex
+                                    engine.updateAgent(updated)
+                                } label: {
+                                    HStack {
+                                        Text(preset.label)
+                                        if OfficeAvatarPreset.resolvedAsset(for: agent) == preset.assetName {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Divider()
+                        Button("Sohbet Geçmişini Temizle") {
+                            engine.clearHistory(for: agent.id)
+                        }
+                    }
+                    .zIndex(isSelected ? 10_000 : Double(pt.y))
                 }
-                .padding(.horizontal, 7).padding(.vertical, 3)
-                .liquidGlassCard(cornerRadius: 8, tint: isSelected ? Color(hex: agent.accentHex) : nil, interactive: true)
             }
-            .position(x: pt.x, y: pt.y - 6)
-            .animation(.easeInOut(duration: 2.2), value: agent.currentPosition)
-            .onTapGesture { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { engine.selectedAgentId = agent.id } }
-            .zIndex(isSelected ? 20 : (agent.status.isBusy ? 10 : 1))
         }
     }
 
@@ -1109,6 +1316,28 @@ struct OfficeFloorView: View {
         case .review: return .green
         case .buildFix: return .orange
         case .retrospective: return .cyan
+        }
+    }
+}
+
+
+private struct FloorWalkMarkerView: View {
+    let accent: Color
+    @State private var expanded = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(accent.opacity(expanded ? 0.0 : 0.85), lineWidth: 2.0)
+                .frame(width: expanded ? 44 : 12, height: expanded ? 22 : 6)
+            Circle()
+                .fill(accent.opacity(expanded ? 0.0 : 0.7))
+                .frame(width: 6, height: 4)
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.95)) {
+                expanded = true
+            }
         }
     }
 }

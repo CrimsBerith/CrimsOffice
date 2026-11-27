@@ -14,8 +14,22 @@ struct WorkspaceAndSkillsView: View {
     @State private var wbSlug: String = ""
     @State private var wbName: String = ""
     @State private var wbDesc: String = ""
+    @State private var wbTriggers: String = ""
     @State private var wbBody: String = "## Amaç\nBu skill için adım adım talimatları yazın.\n"
     @State private var wbFeedback: String = ""
+    @State private var skillSearchText: String = ""
+    @State private var pendingDeleteSkill: AgentSkill? = nil
+
+    private var filteredSkills: [AgentSkill] {
+        let q = skillSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return engine.skills }
+        return engine.skills.filter { sk in
+            sk.name.lowercased().contains(q)
+                || sk.id.lowercased().contains(q)
+                || sk.description.lowercased().contains(q)
+                || sk.triggers.contains { $0.lowercased().contains(q) }
+        }
+    }
 
     private var isDirty: Bool {
         docContent != originalDocContent
@@ -112,6 +126,7 @@ struct WorkspaceAndSkillsView: View {
                             wbSlug = ""
                             wbName = ""
                             wbDesc = ""
+                            wbTriggers = ""
                             wbBody = "## Amaç\nBu skill için adım adım talimatları yazın.\n"
                             wbFeedback = ""
                             showSkillWorkbench = true
@@ -135,22 +150,78 @@ struct WorkspaceAndSkillsView: View {
                             .liquidGlassButton(prominent: false)
                     }
 
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary).font(.caption)
+                        TextField("Skill veya tetikleyici ara...", text: $skillSearchText)
+                            .textFieldStyle(.plain)
+                            .font(.caption)
+                        if !skillSearchText.isEmpty {
+                            Button { skillSearchText = "" } label: {
+                                Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .liquidGlassCard(cornerRadius: 10)
+
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(engine.skills) { sk in
+                            ForEach(filteredSkills) { sk in
                                 VStack(alignment: .leading, spacing: 6) {
-                                    HStack {
+                                    HStack(spacing: 6) {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(sk.name).font(.headline)
                                             Text("/\(sk.id) · \(sk.sourcePath)").font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
                                         }
                                         Spacer()
+                                        Button {
+                                            wbSlug = sk.id
+                                            wbName = sk.name
+                                            wbDesc = sk.description
+                                            wbTriggers = sk.triggers
+                                                .filter { $0 != sk.id && $0 != "/\(sk.id)" }
+                                                .joined(separator: ", ")
+                                            wbBody = sk.body
+                                            wbFeedback = ""
+                                            showSkillWorkbench = true
+                                        } label: {
+                                            Image(systemName: "pencil")
+                                                .font(.caption)
+                                        }
+                                        .buttonStyle(.borderless)
+                                        .help("Skill içeriğini düzenle")
+
+                                        if sk.sourcePath != "Dahili" {
+                                            Button(role: .destructive) {
+                                                pendingDeleteSkill = sk
+                                            } label: {
+                                                Image(systemName: "trash")
+                                                    .font(.caption)
+                                                    .foregroundStyle(.red.opacity(0.85))
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .help("Özel skilli sil")
+                                        }
+
                                         Toggle(sk.name, isOn: Binding(get: { sk.isEnabled }, set: { _ in engine.toggleSkill(id: sk.id) }))
                                             .labelsHidden()
                                             .accessibilityLabel(Text("\(sk.name) yeteneğini aç/kapat"))
                                             .toggleStyle(.switch)
                                     }
                                     Text(sk.description).font(.caption).foregroundStyle(.secondary)
+                                    if !sk.triggers.isEmpty {
+                                        ScrollView(.horizontal, showsIndicators: false) {
+                                            HStack(spacing: 4) {
+                                                ForEach(sk.triggers.prefix(8), id: \.self) { trig in
+                                                    Text(trig)
+                                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                                        .padding(.horizontal, 6).padding(.vertical, 2)
+                                                        .background(Color.teal.opacity(0.14), in: Capsule())
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 .padding(12)
                                 .liquidGlassCard(cornerRadius: 14, tint: sk.isEnabled ? .teal : nil)
@@ -197,6 +268,30 @@ struct WorkspaceAndSkillsView: View {
         } message: {
             Text("Proje kökünde zaten bir AGENTS.md dosyası mevcut. OpenClaw şablonuyla değiştirilsin mi?")
         }
+        .alert("Özel Skill Silinsin mi?", isPresented: Binding(
+            get: { pendingDeleteSkill != nil },
+            set: { if !$0 { pendingDeleteSkill = nil } }
+        )) {
+            Button("Sil", role: .destructive) {
+                if let sk = pendingDeleteSkill {
+                    do {
+                        try OpenClawWorkspaceService.deleteCustomSkill(at: sk.sourcePath, openClawHome: engine.openClawHomePath)
+                        let remaining = Set(engine.skills.filter { $0.isEnabled && $0.id != sk.id }.map { $0.id })
+                        engine.refreshWorkspaceAndSkills(enabledIds: remaining)
+                        engine.saveConfig()
+                        saveSucceeded = true
+                        saveBanner = "\(sk.name) silindi ✓"
+                    } catch {
+                        saveSucceeded = false
+                        saveBanner = "Silinemedi: \(error.localizedDescription)"
+                    }
+                    pendingDeleteSkill = nil
+                }
+            }
+            Button("İptal", role: .cancel) { pendingDeleteSkill = nil }
+        } message: {
+            Text("\(pendingDeleteSkill?.name ?? "") becerisinin SKILL.md klasörü kaldırılacak.")
+        }
         .sheet(isPresented: $showSkillWorkbench) {
             skillWorkbenchSheet
         }
@@ -217,6 +312,7 @@ struct WorkspaceAndSkillsView: View {
                     TextField("Skill Adı", text: $wbName).textFieldStyle(.roundedBorder)
                 }
                 TextField("Kısa Açıklama (progressive disclosure özeti)", text: $wbDesc).textFieldStyle(.roundedBorder)
+                TextField("Tetikleyici Kelimeler (virgülle: swift, build, test)", text: $wbTriggers).textFieldStyle(.roundedBorder)
                 TextEditor(text: $wbBody)
                     .font(.system(size: 12, design: .monospaced))
                     .frame(minHeight: 190)
@@ -231,15 +327,23 @@ struct WorkspaceAndSkillsView: View {
                     Button("Kapat") { showSkillWorkbench = false }.liquidGlassButton(prominent: false)
                     Button("SKILL.md Kaydet") {
                         do {
+                            let rawTriggers = wbTriggers
+                                .split(separator: ",")
+                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                .filter { !$0.isEmpty }
                             let path = try OpenClawWorkspaceService.saveEvolvedSkill(
                                 slug: wbSlug.isEmpty ? wbName : wbSlug,
                                 name: wbName.isEmpty ? wbSlug : wbName,
                                 description: wbDesc,
                                 body: wbBody,
-                                openClawHome: engine.openClawHomePath
+                                openClawHome: engine.openClawHomePath,
+                                triggers: rawTriggers
                             )
-                            engine.refreshWorkspaceAndSkills()
-                            wbFeedback = "Kaydedildi ✓ (\(path))"
+                            let savedSlug = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
+                            let keepEnabled = Set(engine.skills.filter { $0.isEnabled }.map { $0.id } + [savedSlug])
+                            engine.refreshWorkspaceAndSkills(enabledIds: keepEnabled)
+                            engine.saveConfig()
+                            wbFeedback = "Kaydedildi ve aktifleştirildi ✓ (\(path))"
                         } catch {
                             wbFeedback = "Hata: \(error.localizedDescription)"
                         }
