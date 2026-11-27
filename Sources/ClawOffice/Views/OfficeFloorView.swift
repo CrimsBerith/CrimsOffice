@@ -1,0 +1,1114 @@
+import SwiftUI
+
+struct OfficeFloorView: View {
+    @EnvironmentObject var engine: OfficeEngine
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var quickPrompt = ""
+    @State private var showInspector = true
+    @State private var planExpanded = true
+    @State private var showDialogueFeed = true
+    @State private var dialogueExpanded = true
+    @State private var pendingSystemAction: PendingSystemAction? = nil
+    @State private var isRebuilding = false
+    @State private var showWorkspacePopover = false
+    @State private var showEditsPopover = false
+    @State private var selectedEditForDiff: FileEditRecord? = nil
+    @State private var workspaceVerifyStatus: String = ""
+    @State private var isRunningQuickVerify = false
+
+    private enum PendingSystemAction: Identifiable {
+        case selfRebuild
+        case restartApp
+
+        var id: String {
+            switch self {
+            case .selfRebuild: return "selfRebuild"
+            case .restartApp: return "restartApp"
+            }
+        }
+    }
+
+    private var selfRepoPath: String {
+        let detected = AppConfig.detectDefaultWorkspacePath()
+        if FileManager.default.fileExists(atPath: detected + "/build_app.sh") {
+            return detected
+        }
+        return "/Volumes/DATA/Builds/ClawOffice"
+    }
+
+    var body: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                topHUD
+                if !engine.planTasks.isEmpty {
+                    Divider()
+                    planBoardOverlay
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .liquidGlassBar(tint: .blue)
+                }
+                Divider()
+                GeometryReader { geo in
+                    ZStack(alignment: .topLeading) {
+                        backgroundLayer
+                        zonesLayer(size: geo.size)
+                        desksLayer(size: geo.size)
+                        beamsLayer(size: geo.size)
+                        flyingPacketsLayer(size: geo.size)
+                        agentsLayer(size: geo.size)
+                    }
+                    .clipped()
+                }
+                if showDialogueFeed {
+                    Divider()
+                    dialogueFeedOverlay
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .liquidGlassBar(tint: .teal)
+                }
+                Divider()
+                quickBar
+            }
+            .frame(minWidth: 520, idealWidth: 680)
+
+            if showInspector {
+                AgentInspectorView()
+                    .frame(minWidth: 320, idealWidth: 400, maxWidth: 520)
+            }
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                Menu {
+                    ForEach(CavemanMode.allCases) { m in
+                        Button {
+                            engine.cavemanMode = m
+                            engine.saveConfig()
+                        } label: {
+                            HStack {
+                                Text(m.rawValue)
+                                if engine.cavemanMode == m { Image(systemName: "checkmark") }
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Caveman: \(engine.cavemanMode.rawValue)", systemImage: "bolt.shield.fill")
+                }
+
+                Menu {
+                    Button {
+                        pendingSystemAction = .restartApp
+                    } label: {
+                        Label("Yeniden Başlat (Restart)", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(isRebuilding || engine.isRunningPipeline)
+
+                    Divider()
+                    Button {
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: engine.workspacePath)
+                    } label: {
+                        Label("Çalışma Klasörünü Finder'da Aç", systemImage: "folder")
+                    }
+                } label: {
+                    Label("Mac & Sistem", systemImage: "macbook.and.iphone")
+                }
+
+                Button { engine.recallAllAgentsToDesks() } label: {
+                    Label("Masalara Çağır", systemImage: "arrow.uturn.backward.circle")
+                }
+
+                Button { withAnimation { showInspector.toggle() } } label: {
+                    Label("Panel", systemImage: "sidebar.right")
+                }
+            }
+        }
+        .confirmationDialog(
+            pendingSystemAction == .selfRebuild
+                ? "Crims Office Kendini Derlesin ve Yeniden Başlatsın mı?"
+                : "Crims Office Yeniden Başlatılsın mı?",
+            isPresented: Binding(
+                get: { pendingSystemAction != nil },
+                set: { if !$0 { pendingSystemAction = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if pendingSystemAction == .selfRebuild {
+                Button("Derle ve Yeniden Başlat", role: .destructive) {
+                    guard !isRebuilding else { return }
+                    isRebuilding = true
+                    Task { @MainActor in
+                        _ = await engine.selfRebuildAndRestart(reason: "Araç çubuğundan onaylandı")
+                        isRebuilding = false
+                    }
+                }
+            } else if pendingSystemAction == .restartApp {
+                Button("Yeniden Başlat", role: .destructive) {
+                    engine.restartApp(reason: "Araç çubuğundan onaylandı")
+                }
+            }
+            Button("İptal", role: .cancel) {
+                pendingSystemAction = nil
+            }
+        }
+    }
+
+    private var topHUD: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                CrimsBrandLogoView(size: 16)
+                Circle()
+                    .fill(engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48"))
+                    .frame(width: 7, height: 7)
+                    .shadow(color: (engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48")).opacity(0.7), radius: 4)
+                Text(engine.isRunningPipeline ? engine.pipelineStatusText : (engine.activeBusyCount > 0 ? "\(engine.activeBusyCount) Ajan Aktif" : "Crims Studio"))
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .liquidGlassCapsule(tint: engine.activeBusyCount > 0 ? .green : Color(hex: "#E11D48"), interactive: false)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LiquidGlassContainer(spacing: 7) {
+                    HStack(spacing: 7) {
+                        Button {
+                            showWorkspacePopover.toggle()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder.fill")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.blue)
+                                Text(URL(fileURLWithPath: engine.workspacePath).lastPathComponent)
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: .blue, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Aktif proje klasörü: \(engine.workspacePath) (Değiştir / Build & Test)")
+                        .popover(isPresented: $showWorkspacePopover, arrowEdge: .bottom) {
+                            workspacePopoverContent
+                        }
+
+                        Button {
+                            engine.allowFileWrites.toggle()
+                            engine.saveConfig()
+                        } label: {
+                            statusPill("Kod Yazma", active: engine.allowFileWrites, color: .purple)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Ajanların dosya yazma/yamalama yetkisini aç/kapat")
+
+                        Button {
+                            engine.autoVerifyBuild.toggle()
+                            engine.saveConfig()
+                        } label: {
+                            statusPill("Build Gate", active: engine.autoVerifyBuild, color: .green)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Kod düzenlemesi sonrası otomatik derleme/test doğrulamasını aç/kapat")
+
+                        if !engine.fileEdits.isEmpty {
+                            let activeEditCount = engine.fileEdits.filter { !$0.rolledBack }.count
+                            Button {
+                                if selectedEditForDiff == nil { selectedEditForDiff = engine.fileEdits.first }
+                                showEditsPopover.toggle()
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.badge.clock.fill")
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.mint)
+                                    Text("\(activeEditCount) Düzenleme")
+                                        .font(.system(size: 10, weight: .semibold))
+                                }
+                                .padding(.horizontal, 8).padding(.vertical, 4.5)
+                                .liquidGlassCapsule(tint: .mint, interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Ajanların yaptığı kod düzenlemelerini, diff ve geri alma (rollback) seçeneklerini incele")
+                            .popover(isPresented: $showEditsPopover, arrowEdge: .bottom) {
+                                editsRollbackPopoverContent
+                            }
+                        }
+
+                        if let git = engine.gitBranchSummary {
+                            statusPill("\(git.branch)\(git.dirtyCount > 0 ? " (\(git.dirtyCount))" : "")", active: true, color: git.dirtyCount > 0 ? .yellow : .mint)
+                        }
+
+                        Button {
+                            engine.requestedSectionRawValue = AppSection.openClawHub.rawValue
+                        } label: {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(engine.openClawGatewaySnap.gatewayOnline ? Color.green : (engine.openClawGatewaySnap.cliInstalled ? Color.orange : Color.gray))
+                                    .frame(width: 6, height: 6)
+                                Text(engine.openClawGatewaySnap.gatewayOnline ? "OpenClaw WS" : "OpenClaw Hub")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 9).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: engine.openClawGatewaySnap.gatewayOnline ? .teal : .indigo, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("OpenClaw Gateway, Kanallar, Cron ve Maliyet/Güvenlik Panosu")
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showDialogueFeed.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bubble.left.and.bubble.right.fill")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(showDialogueFeed ? .teal : .secondary)
+                                Text("Ekip Sohbeti (\(engine.officeDialogues.count))")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: showDialogueFeed ? .teal : nil, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Ajanların birbirleriyle konuşma akışını göster/gizle")
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                engine.useIllustratedFloorBackdrop.toggle()
+                                engine.saveConfig()
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: engine.useIllustratedFloorBackdrop ? "sun.max.fill" : "square.grid.2x2")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(engine.useIllustratedFloorBackdrop ? .orange : .secondary)
+                                Text(engine.useIllustratedFloorBackdrop ? "Sahil Stüdyo" : "Minimal Cam")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: engine.useIllustratedFloorBackdrop ? .orange : nil, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("İllüstrasyonlu Crims Beach Stüdyo zeminini aç/kapat")
+
+                        ForEach(engine.providers) { p in
+                            let health = engine.providerStatuses[p.id]
+                            let tintCol: Color = health != nil ? (health!.isOnline ? .green : .red) : (p.isConfigured ? .blue : .gray)
+                            Button {
+                                engine.checkProvidersHealth()
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(tintCol)
+                                        .frame(width: 7, height: 7)
+                                    Text(p.name).font(.caption.weight(.medium))
+                                    if let h = health, h.isOnline && h.latencyMs > 0 {
+                                        Text("\(h.latencyMs)ms")
+                                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 9).padding(.vertical, 4.5)
+                                .liquidGlassCapsule(tint: tintCol, interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Sağlık kontrolü: \(health?.statusMessage ?? "Tıkla ve test et")")
+                        }
+
+                        HStack(spacing: 4) {
+                            Image(systemName: "shield.lefthalf.filled.badge.checkmark")
+                                .foregroundStyle(.blue)
+                                .font(.system(size: 10))
+                            Text(engine.lastFailoverNotice.isEmpty ? "Devralma: Aktif\(engine.failoverEventCount > 0 ? " (\(engine.failoverEventCount))" : "")" : "🔄 \(engine.lastFailoverNotice)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 4.5)
+                        .liquidGlassCapsule(tint: engine.lastFailoverNotice.isEmpty ? .blue : .orange, interactive: false)
+                        .help("Model dolu, kotada veya zaman aşımında sıradaki model/sağlayıcı görevi otomatik devralır.")
+
+                        if engine.cavemanMode != .off {
+                            HStack(spacing: 4) {
+                                Image(systemName: "bolt.shield.fill").foregroundStyle(.yellow).font(.system(size: 10))
+                                Text("Caveman \(engine.cavemanMode.rawValue)")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 9).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: .yellow, interactive: false)
+                        }
+
+                        statusPill("RTK Proxy", active: engine.cliStatus.rtkInstalled && engine.enableRTKProxy, color: .orange)
+                        statusPill("Graphify AI", active: engine.graphSnapshot != nil, color: .cyan)
+
+                        if engine.totalToolCallsExecuted > 0 {
+                            statusPill("\(engine.totalToolCallsExecuted) Araç", active: true, color: .indigo)
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .liquidGlassBar()
+    }
+
+    private var workspacePopoverContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Aktif Proje Çalışma Alanı", systemImage: "folder.badge.gearshape")
+                    .font(.headline)
+                Spacer()
+                if let git = engine.gitBranchSummary {
+                    Text("\(git.branch) · \(git.dirtyCount) değişiklik")
+                        .font(.system(size: 10, design: .monospaced))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .liquidGlassCapsule(tint: git.dirtyCount > 0 ? .orange : .mint, interactive: false)
+                }
+            }
+            Text(engine.workspacePath)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            let detectedBuild = PowerShellTools.detectBuildCommand(workspacePath: engine.workspacePath, customOverride: engine.customBuildCommand)
+            let detectedTest = PowerShellTools.detectTestCommand(workspacePath: engine.workspacePath, customOverride: "")
+            if detectedBuild != nil || detectedTest != nil {
+                Text("Algılanan komutlar: \(detectedBuild ?? "-")\(detectedTest.map { " · \($0)" } ?? "")")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Button("Klasör Seç...") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.allowsMultipleSelection = false
+                    panel.directoryURL = URL(fileURLWithPath: engine.workspacePath)
+                    if panel.runModal() == .OK, let url = panel.url {
+                        engine.setWorkspacePath(url.path)
+                        workspaceVerifyStatus = "Yeni çalışma alanı: \(url.lastPathComponent)"
+                    }
+                }
+                .liquidGlassButton(prominent: true, tint: .blue)
+                .controlSize(.small)
+
+                if let runCmd = detectedBuild ?? detectedTest {
+                    Button {
+                        guard !isRunningQuickVerify else { return }
+                        isRunningQuickVerify = true
+                        workspaceVerifyStatus = "⏳ `\(runCmd)` çalışıyor..."
+                        let ws = engine.workspacePath
+                        let useRTK = engine.enableRTKProxy
+                        Task { @MainActor in
+                            let res = await PowerShellTools.runCommand(runCmd, workspacePath: ws, wrapWithRTK: useRTK)
+                            isRunningQuickVerify = false
+                            workspaceVerifyStatus = (res.succeeded ? "✅ Başarılı: " : "⚠️ Hata: ") + String(res.output.prefix(240))
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if isRunningQuickVerify { ProgressView().controlSize(.mini) }
+                            Text("Derle / Doğrula")
+                        }
+                    }
+                    .liquidGlassButton(prominent: false)
+                    .controlSize(.small)
+                    .disabled(isRunningQuickVerify)
+                }
+
+                Button("Finder'da Aç") {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: engine.workspacePath)
+                }
+                .liquidGlassButton(prominent: false)
+                .controlSize(.small)
+            }
+
+            if !workspaceVerifyStatus.isEmpty {
+                ScrollView {
+                    Text(workspaceVerifyStatus)
+                        .font(.system(size: 10, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 90)
+                .padding(6)
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(14)
+        .frame(width: 440)
+    }
+
+    private var editsRollbackPopoverContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Ajan Kod Düzenlemeleri & Geri Alma", systemImage: "arrow.uturn.backward.square.fill")
+                    .font(.headline)
+                Spacer()
+                Text("\(engine.fileEdits.count) kayıt")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    ForEach(engine.fileEdits.prefix(25)) { rec in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(rec.relativePath)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .lineLimit(1)
+                                Text("\(rec.agentName) · \(rec.summary)")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            if rec.rolledBack {
+                                Text("Geri Alındı")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundStyle(.orange)
+                            } else {
+                                if !rec.backupPath.isEmpty {
+                                    Button("Diff") {
+                                        selectedEditForDiff = rec
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .font(.system(size: 10, weight: .semibold))
+                                }
+                                Button("Geri Al") {
+                                    _ = engine.rollbackEdit(id: rec.id)
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.red)
+                                .font(.system(size: 10, weight: .semibold))
+                            }
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(
+                            (selectedEditForDiff?.id == rec.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)),
+                            in: RoundedRectangle(cornerRadius: 8)
+                        )
+                    }
+                }
+            }
+            .frame(maxHeight: 165)
+
+            if let diffRec = selectedEditForDiff, !diffRec.backupPath.isEmpty {
+                let currentURL = PowerShellTools.resolveSafeURL(diffRec.relativePath, workspacePath: engine.workspacePath)
+                let newText = currentURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+                let oldText = (try? String(contentsOfFile: diffRec.backupPath, encoding: .utf8)) ?? ""
+                let diffLines = LineDiffUtility.unifiedDiff(oldText: oldText, newText: newText, maxLines: 32)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Diff Önizleme: \(diffRec.relativePath)")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        Text(diffLines.joined(separator: "\n"))
+                            .font(.system(size: 9.5, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 120)
+                    .padding(6)
+                    .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 480)
+    }
+
+    private func statusPill(_ title: String, active: Bool, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(active ? color : Color.secondary.opacity(0.4)).frame(width: 6, height: 6)
+            Text(title).font(.system(size: 10, weight: .semibold))
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4.5)
+        .liquidGlassCapsule(tint: active ? color : nil, interactive: false)
+    }
+
+    private var backgroundLayer: some View {
+        ZStack {
+            AmbientGlassBackdrop(accent: Color(hex: engine.selectedAgent?.accentHex ?? "#E11D48"))
+            if engine.useIllustratedFloorBackdrop,
+               let bgImg = AvatarImageLoader.nsImage(named: "office_studio_floor") {
+                Image(nsImage: bgImg)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(colorScheme == .dark ? 0.36 : 0.62)
+                    .overlay(
+                        (colorScheme == .dark ? Color.black.opacity(0.32) : Color.white.opacity(0.18))
+                    )
+                    .allowsHitTesting(false)
+            }
+            Canvas { ctx, size in
+                var p = Path()
+                var x: CGFloat = 0
+                while x <= size.width { p.move(to: .init(x: x, y: 0)); p.addLine(to: .init(x: x, y: size.height)); x += 36 }
+                var y: CGFloat = 0
+                while y <= size.height { p.move(to: .init(x: 0, y: y)); p.addLine(to: .init(x: size.width, y: y)); y += 36 }
+                ctx.stroke(p, with: .color(colorScheme == .dark ? .white.opacity(0.035) : .black.opacity(0.04)), lineWidth: 1)
+            }
+            .drawingGroup()
+        }
+    }
+
+    private func zonesLayer(size: CGSize) -> some View {
+        ZStack {
+            meetingRoomZone(size: size)
+            coffeeZone(size: size)
+            macStudioZone(size: size)
+        }
+    }
+
+    private func meetingRoomZone(size: CGSize) -> some View {
+        let isMeetingActive = engine.isRunningPipeline || engine.agents.contains(where: { $0.currentZone == .meetingRoom })
+        let w = min(232, size.width * 0.31)
+        let h = min(108, size.height * 0.19)
+
+        return ZStack {
+            Capsule()
+                .fill(colorScheme == .dark ? Color.white.opacity(0.07) : Color.white.opacity(0.35))
+                .frame(width: min(136, size.width * 0.18), height: min(46, size.height * 0.09))
+                .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 1))
+
+            VStack(spacing: 4) {
+                Image(systemName: "person.3.sequence.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isMeetingActive ? Color.accentColor : .secondary)
+                Text("TOPLANTI & TARTIŞMA ODASI")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(isMeetingActive ? Color.accentColor : .secondary)
+                    .tracking(0.5)
+
+                if engine.isRunningPipeline {
+                    Text("CANLI OTURUM")
+                        .font(.system(size: 8, weight: .heavy))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8).padding(.vertical, 2.5)
+                        .background(Color.accentColor, in: Capsule())
+                        .shadow(color: Color.accentColor.opacity(0.6), radius: 5)
+                }
+            }
+        }
+        .frame(width: w, height: h)
+        .liquidGlassCard(cornerRadius: 24, tint: isMeetingActive ? .accentColor : nil, interactive: false)
+        .position(x: size.width * 0.50, y: size.height * 0.50)
+    }
+
+    private func coffeeZone(size: CGSize) -> some View {
+        let w = min(194, max(164, size.width * 0.30))
+        return HStack(spacing: 8) {
+            ZStack {
+                Circle().fill(Color.orange.opacity(0.22)).frame(width: 30, height: 30)
+                Image(systemName: "cup.and.saucer.fill").foregroundStyle(.orange).font(.system(size: 13))
+            }
+            VStack(alignment: .leading, spacing: 1.5) {
+                Text("Kahve & Dinlenme").font(.system(size: 10.5, weight: .bold, design: .rounded)).lineLimit(1)
+                Text("Mola & Beyin Fırtınası")
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(width: w, height: 54)
+        .liquidGlassCard(cornerRadius: 16, tint: .orange, interactive: false)
+        .position(x: size.width * 0.20, y: max(40, size.height - 40))
+    }
+
+    private func macStudioZone(size: CGSize) -> some View {
+        let w = min(204, max(168, size.width * 0.31))
+        return HStack(spacing: 8) {
+            ZStack {
+                Circle().fill(Color.cyan.opacity(0.22)).frame(width: 30, height: 30)
+                Image(systemName: "macstudio.fill").foregroundStyle(.cyan).font(.system(size: 13))
+            }
+            VStack(alignment: .leading, spacing: 1.5) {
+                Text("Mac Studio Hub").font(.system(size: 10.5, weight: .bold, design: .rounded)).lineLimit(1)
+                Text("\(engine.configuredProviderCount) API · \(engine.fileEdits.count) Patch")
+                    .font(.system(size: 8.5, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(width: w, height: 54)
+        .liquidGlassCard(cornerRadius: 16, tint: .cyan, interactive: false)
+        .position(x: size.width * 0.80, y: max(40, size.height - 40))
+    }
+
+    private func floorPoint(for pos: Point2D, in size: CGSize) -> CGPoint {
+        let padX = min(size.width * 0.45, 92)
+        let padTop = min(size.height * 0.45, 72)
+        let padBottom = min(size.height * 0.45, 68)
+        let rawX = size.width * pos.x
+        let rawY = size.height * pos.y
+        return CGPoint(
+            x: min(max(rawX, padX), max(padX, size.width - padX)),
+            y: min(max(rawY, padTop), max(padTop, size.height - padBottom))
+        )
+    }
+
+    private func desksLayer(size: CGSize) -> some View {
+        ForEach(engine.agents) { agent in
+            let pt = floorPoint(for: agent.deskPosition, in: size)
+            let working = agent.status.isBusy && agent.currentZone == .desk
+            let isSelected = engine.selectedAgentId == agent.id
+            let accent = Color(hex: agent.accentHex)
+            let isAtOwnDesk = agent.currentZone == .desk
+
+            ZStack {
+                // Translucent Workstation Desk Pad
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(isSelected ? accent.opacity(0.12) : (colorScheme == .dark ? Color.white.opacity(0.035) : Color.white.opacity(0.42)))
+                    .frame(width: 118, height: 48)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(working ? accent.opacity(0.50) : Color.white.opacity(isSelected ? 0.24 : 0.10), lineWidth: 1)
+                    )
+
+                // Compact Glowing Studio Display docked neatly on right side of desk pad
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(Color(red: 0.06, green: 0.08, blue: 0.13))
+                    .frame(width: 34, height: 22)
+                    .overlay(
+                        VStack(alignment: .leading, spacing: 2.5) {
+                            HStack(spacing: 2) {
+                                Circle().fill(working ? accent : Color.green.opacity(0.75)).frame(width: 3, height: 3)
+                                Spacer()
+                            }
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(accent.opacity(working ? 0.95 : 0.50))
+                                .frame(width: working ? 22 : 14, height: 2.5)
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Color.white.opacity(working ? 0.65 : 0.25))
+                                .frame(width: 16, height: 2)
+                        }
+                        .padding(3.5)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                            .stroke(working ? accent.opacity(0.75) : Color.white.opacity(0.16), lineWidth: 1)
+                    )
+                    .shadow(color: working ? accent.opacity(0.45) : .clear, radius: 4)
+                    .offset(x: 42, y: -12)
+
+                // Empty-desk nameplate shown ONLY when the agent walks to Meeting Room / Server Rack
+                if !isAtOwnDesk {
+                    Text("\(agent.emoji) \(agent.name) Masası")
+                        .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .offset(x: -10, y: 4)
+                }
+            }
+            .position(x: pt.x, y: pt.y - 4)
+            .onTapGesture {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    engine.selectedAgentId = agent.id
+                }
+            }
+        }
+    }
+
+    // Animated Inter-Agent Communication Beams
+    private func beamsLayer(size: CGSize) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: engine.activeBeams.isEmpty)) { timeline in
+            let dashPhase = CGFloat(timeline.date.timeIntervalSinceReferenceDate * -26.0)
+                .truncatingRemainder(dividingBy: 24.0)
+            ZStack {
+                Canvas { ctx, canvasSize in
+                    for beam in engine.activeBeams {
+                        guard let fromA = engine.agents.first(where: { $0.id == beam.fromAgentId }),
+                              let toA = engine.agents.first(where: { $0.id == beam.toAgentId }) else { continue }
+                        let p1 = floorPoint(for: fromA.currentPosition, in: canvasSize)
+                        let p2 = floorPoint(for: toA.currentPosition, in: canvasSize)
+                        let a1 = CGPoint(x: p1.x, y: p1.y - 4)
+                        let a2 = CGPoint(x: p2.x, y: p2.y - 4)
+                        let mid = CGPoint(x: (a1.x + a2.x) / 2, y: min(a1.y, a2.y) - 36)
+
+                        var path = Path()
+                        path.move(to: a1)
+                        path.addQuadCurve(to: a2, control: mid)
+
+                        let col = Color(hex: beam.accentHex)
+                        ctx.stroke(path, with: .color(col.opacity(0.24)), lineWidth: 7)
+                        ctx.stroke(
+                            path,
+                            with: .color(col.opacity(0.95)),
+                            style: StrokeStyle(lineWidth: 2.2, lineCap: .round, dash: [7, 5], dashPhase: dashPhase)
+                        )
+                    }
+                }
+
+                ForEach(engine.activeBeams) { beam in
+                    if let fromA = engine.agents.first(where: { $0.id == beam.fromAgentId }),
+                       let toA = engine.agents.first(where: { $0.id == beam.toAgentId }) {
+                        let p1 = floorPoint(for: fromA.currentPosition, in: size)
+                        let p2 = floorPoint(for: toA.currentPosition, in: size)
+                        let labelPt = CGPoint(x: (p1.x + p2.x) / 2, y: min(p1.y - 4, p2.y - 4) - 24)
+
+                        Text(beam.label)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(Color(hex: beam.accentHex), in: Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1))
+                            .shadow(color: Color(hex: beam.accentHex).opacity(0.45), radius: 4)
+                            .position(labelPt)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func flyingPacketsLayer(size: CGSize) -> some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: engine.flyingPackets.isEmpty)) { timeline in
+            ZStack {
+                ForEach(engine.flyingPackets) { pkt in
+                    if let fromA = engine.agents.first(where: { $0.id == pkt.fromAgentId }),
+                       let toA = engine.agents.first(where: { $0.id == pkt.toAgentId }) {
+                        let elapsed = max(0, timeline.date.timeIntervalSince(pkt.createdAt))
+                        let t = CGFloat(min(1.0, elapsed / 2.2))
+                        let raw0 = floorPoint(for: fromA.currentPosition, in: size)
+                        let raw1 = floorPoint(for: toA.currentPosition, in: size)
+                        let p0 = CGPoint(x: raw0.x, y: raw0.y - 14)
+                        let p1 = CGPoint(x: raw1.x, y: raw1.y - 14)
+                        let ctrl = CGPoint(x: (p0.x + p1.x) / 2, y: min(p0.y, p1.y) - 48)
+                        let mt = 1.0 - t
+                        let curX = mt * mt * p0.x + 2 * mt * t * ctrl.x + t * t * p1.x
+                        let curY = mt * mt * p0.y + 2 * mt * t * ctrl.y + t * t * p1.y
+                        let opacity = t < 0.85 ? 1.0 : max(0.0, (1.0 - t) / 0.15)
+
+                        HStack(spacing: 4) {
+                            Image(systemName: "envelope.fill")
+                                .font(.system(size: 11, weight: .bold))
+                            Text(String(pkt.label.prefix(16)))
+                                .font(.system(size: 8.5, weight: .bold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(Color(hex: pkt.accentHex), in: Capsule())
+                        .overlay(Capsule().stroke(Color.white.opacity(0.65), lineWidth: 1))
+                        .shadow(color: Color(hex: pkt.accentHex).opacity(0.75), radius: 7)
+                        .opacity(opacity)
+                        .position(x: curX, y: curY)
+                    }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func agentsLayer(size: CGSize) -> some View {
+        ForEach(engine.agents) { agent in
+            let pt = floorPoint(for: agent.currentPosition, in: size)
+            let isSelected = engine.selectedAgentId == agent.id
+            let isWalking = engine.walkingAgentIds.contains(agent.id)
+            let facingLeft = engine.agentFacingLeft[agent.id] ?? false
+            let provName = engine.provider(for: agent.providerId)?.name ?? "API"
+            let cleanBubble = agent.statusBubble.trimmingCharacters(in: .whitespacesAndNewlines)
+            VStack(spacing: 2) {
+                if !cleanBubble.isEmpty {
+                    let activeTalk = agent.status.isBusy || agent.status == .chatting || isWalking
+                    Text(cleanBubble)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 176)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .liquidGlassCard(
+                            cornerRadius: 10,
+                            tint: activeTalk ? Color(hex: agent.accentHex) : nil,
+                            interactive: false
+                        )
+                }
+
+                AgentAvatarView(
+                    agent: agent,
+                    size: isSelected ? 78 : 66,
+                    showStatusDot: true,
+                    isSelected: isSelected,
+                    isWalking: isWalking,
+                    facingLeft: facingLeft,
+                    mode: .floorSprite
+                )
+
+                VStack(spacing: 1) {
+                    HStack(spacing: 3) {
+                        Text("\(agent.emoji) \(agent.name)")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text(agent.title)
+                            .font(.system(size: 7.5, weight: .medium))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color(hex: agent.accentHex).opacity(0.22), in: Capsule())
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: 68)
+                    }
+                    .frame(maxWidth: 140)
+                    Text("\(provName) · \(agent.modelId)")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 138)
+                }
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .liquidGlassCard(cornerRadius: 8, tint: isSelected ? Color(hex: agent.accentHex) : nil, interactive: true)
+            }
+            .position(x: pt.x, y: pt.y - 6)
+            .animation(.easeInOut(duration: 2.2), value: agent.currentPosition)
+            .onTapGesture { withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { engine.selectedAgentId = agent.id } }
+            .zIndex(isSelected ? 20 : (agent.status.isBusy ? 10 : 1))
+        }
+    }
+
+    private var quickBar: some View {
+        HStack(spacing: 10) {
+            if let a = engine.selectedAgent {
+                Menu {
+                    Section("Aktif Ajanı Seç") {
+                        ForEach(engine.agents) { ag in
+                            Button {
+                                engine.selectedAgentId = ag.id
+                            } label: {
+                                HStack {
+                                    Text("\(ag.emoji) \(ag.name) (\(ag.modelId))")
+                                    if ag.id == a.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                        }
+                    }
+                    if let prov = engine.provider(for: a.providerId), !prov.uniqueModels.isEmpty {
+                        Section("\(a.name) Modelini Değiştir") {
+                            ForEach(prov.uniqueModels.prefix(25), id: \.self) { m in
+                                Button {
+                                    var u = a
+                                    u.modelId = m
+                                    engine.updateAgent(u)
+                                } label: {
+                                    HStack {
+                                        Text(m)
+                                        if a.modelId == m { Image(systemName: "checkmark") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(a.emoji).font(.system(size: 14))
+                        Text(a.name)
+                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .liquidGlassCapsule(tint: Color(hex: a.accentHex), interactive: true)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .layoutPriority(2)
+            }
+
+            let activeAgent = engine.selectedAgent
+            GlassChatInputBar(
+                text: $quickPrompt,
+                placeholder: "Buraya yaz, ajanlar gerekeni yapsın... (↵ Gönder)",
+                isBusy: activeAgent?.status.isBusy ?? false,
+                accent: activeAgent.map { Color(hex: $0.accentHex) } ?? .accentColor,
+                compact: true,
+                onSend: { prompt in
+                    guard let target = engine.selectedAgent, !target.status.isBusy else { return }
+                    engine.sendMessage(to: target.id, text: prompt)
+                },
+                onStop: {
+                    if let activeId = engine.selectedAgent?.id {
+                        engine.cancelTask(for: activeId)
+                    }
+                }
+            )
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .liquidGlassBar()
+    }
+
+    private var planBoardOverlay: some View {
+        let doneCount = engine.planTasks.filter { $0.status == .done }.count
+        let total = engine.planTasks.count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.blue)
+                Text(engine.activePlanGoal.isEmpty ? "Aktif Görev Planı" : engine.activePlanGoal)
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(doneCount)/\(total)")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6).padding(.vertical, 1.5)
+                    .background(.blue.opacity(0.20), in: Capsule())
+                Button {
+                    withAnimation(.spring(response: 0.25)) { planExpanded.toggle() }
+                } label: {
+                    Image(systemName: planExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                if engine.activeBusyCount == 0 {
+                    Button {
+                        withAnimation { engine.clearPlan() }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Plan panosunu temizle")
+                }
+            }
+
+            if planExpanded {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 5) {
+                        ForEach(Array(engine.planTasks.enumerated()), id: \.element.id) { idx, t in
+                            HStack(spacing: 6) {
+                                Image(systemName: taskIconName(for: t.status))
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(taskColor(for: t.status))
+                                Text("\(idx + 1). \(t.title)")
+                                    .font(.system(size: 10))
+                                    .lineLimit(1)
+                                    .foregroundStyle(t.status == .done ? .secondary : .primary)
+                                Spacer(minLength: 4)
+                                Text(t.assigneeName)
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(Color.primary.opacity(0.08), in: Capsule())
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+                .frame(maxHeight: 96)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .liquidGlassCard(cornerRadius: 14, tint: .blue, interactive: true)
+    }
+
+    private func taskIconName(for status: OfficeTaskStatus) -> String {
+        switch status {
+        case .pending: return "circle"
+        case .inProgress: return "arrow.trianglehead.2.clockwise"
+        case .done: return "checkmark.circle.fill"
+        case .blocked: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private func taskColor(for status: OfficeTaskStatus) -> Color {
+        switch status {
+        case .pending: return .secondary
+        case .inProgress: return .blue
+        case .done: return .green
+        case .blocked: return .red
+        }
+    }
+
+    private var dialogueFeedOverlay: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.teal)
+                Text("Canlı Ekip Konuşmaları")
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                Text("\(engine.officeDialogues.count)")
+                    .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 6).padding(.vertical, 1.5)
+                    .background(.teal.opacity(0.20), in: Capsule())
+                Spacer(minLength: 4)
+                if !engine.officeDialogues.isEmpty {
+                    Button("Temizle") {
+                        withAnimation { engine.clearDialogues() }
+                    }
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                }
+                Button {
+                    withAnimation(.spring(response: 0.25)) { dialogueExpanded.toggle() }
+                } label: {
+                    Image(systemName: dialogueExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if dialogueExpanded {
+                if engine.officeDialogues.isEmpty {
+                    Text("Ajanlar ofiste birbirleriyle sohbet ettiğinde veya görev devrettiğinde konuşmalar burada canlı akar.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(engine.officeDialogues.prefix(25)) { msg in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text("\(msg.fromEmoji) \(msg.fromName)")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("→ \(msg.toName):")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    Text(msg.content.replacingOccurrences(of: "\n", with: " "))
+                                        .font(.system(size: 10))
+                                        .lineLimit(2)
+                                    Spacer(minLength: 4)
+                                    Text(msg.kind.rawValue)
+                                        .font(.system(size: 8.5, weight: .bold))
+                                        .padding(.horizontal, 5).padding(.vertical, 1.5)
+                                        .background(dialogueKindColor(msg.kind).opacity(0.18), in: Capsule())
+                                        .foregroundStyle(dialogueKindColor(msg.kind))
+                                    Text(msg.timestamp, format: .dateTime.hour().minute())
+                                        .font(.system(size: 8.5, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 112)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .liquidGlassCard(cornerRadius: 14, tint: .teal, interactive: true)
+    }
+
+    private func dialogueKindColor(_ kind: DialogueKind) -> Color {
+        switch kind {
+        case .social: return .teal
+        case .debate: return .indigo
+        case .handoff: return .purple
+        case .review: return .green
+        case .buildFix: return .orange
+        case .retrospective: return .cyan
+        }
+    }
+}

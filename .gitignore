@@ -1,0 +1,23 @@
+# SwiftPM, Xcode & macOS build artifacts
+.build/
+.swiftpm/
+build/
+DerivedData/
+*.xcodeproj
+*.xcworkspace
+*.xcuserstate
+xcuserdata/
+
+# Python virtual environment, caches & runtime scratch
+swarms-runtime/.venv/
+swarms-runtime/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+swarms-runtime/workspace/
+
+# Local backups, OS metadata & logs
+.clawoffice-backups/
+.DS_Store
+*.log
+*.tmp
