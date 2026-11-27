@@ -418,6 +418,74 @@ class SwarmsBridgeTests(unittest.TestCase):
         finally:
             sb.RUNTIME_TRACKER.clear()
 
+    def test_evren_concurrency_cap_slot_wait_and_retry_telemetry(self) -> None:
+        import threading
+
+        sb.RUNTIME_TRACKER.clear()
+        try:
+            evren = sb.ProviderSpec(
+                kind="evren",
+                name="EVREN",
+                base_url="https://evren.example/v1",
+                api_key="evren-key",
+            )
+            openrouter = sb.ProviderSpec(
+                kind="openRouter",
+                name="OpenRouter",
+                base_url="https://openrouter.ai/api/v1",
+                api_key="or-key",
+            )
+
+            self.assertEqual(sb.RuntimeLoadTracker.provider_concurrency_limit(evren), 3)
+            for m in ("m1", "m2", "m3"):
+                self.assertTrue(sb.RUNTIME_TRACKER.acquire_provider_slot(evren, m, max_wait=0.2))
+            self.assertEqual(sb.RUNTIME_TRACKER.provider_in_flight(evren), 3)
+
+            # 4th EVREN call must respect the cap without starving an idle fallback provider
+            ordered = sb.RUNTIME_TRACKER.order_candidates([(evren, "m4"), (openrouter, "or-model")])
+            self.assertEqual(ordered[0], (openrouter, "or-model"))
+            self.assertFalse(sb.RUNTIME_TRACKER.acquire_provider_slot(evren, "m4", max_wait=0.05))
+
+            def release_one_soon() -> None:
+                import time
+                time.sleep(0.08)
+                sb.RUNTIME_TRACKER.end_in_flight(evren, "m1")
+
+            t = threading.Thread(target=release_one_soon, daemon=True)
+            t.start()
+            self.assertTrue(sb.RUNTIME_TRACKER.acquire_provider_slot(evren, "m4", max_wait=1.0))
+            sb.RUNTIME_TRACKER.end_in_flight(evren, "m4")
+            sb.RUNTIME_TRACKER.end_in_flight(evren, "m2")
+            sb.RUNTIME_TRACKER.end_in_flight(evren, "m3")
+            t.join(timeout=1.0)
+
+            # Retry policy + telemetry.log_event must handle snake_case max_retries without AttributeError
+            telemetry = sb.SwarmTelemetryCollector()
+            spec = sb.AgentSpec(
+                name="Tamirci",
+                title="Tamirci",
+                model_name="m-retry",
+                provider=evren.model_copy(update={"model_name": "m-retry"}),
+                retry_policy={"max_retries": 2, "initial_delay": 0.01, "multiplier": 1.0},
+            )
+            llm = sb.ResilientSwarmsLLM(spec, telemetry=telemetry, retry_policy=spec.retry_policy)
+            attempts = []
+
+            def flaky_http(self_llm, prov, model, task=None, messages=None):
+                attempts.append((prov.kind, model))
+                if len(attempts) == 1:
+                    raise RuntimeError("503 Service Unavailable")
+                return "Recovered on retry"
+
+            with patch.object(sb.ResilientSwarmsLLM, "_call_http_provider", flaky_http):
+                out = llm.run("retry check")
+
+            self.assertEqual(out, "Recovered on retry")
+            self.assertEqual(len(attempts), 2)
+            self.assertEqual(len(telemetry.events), 1)
+        finally:
+            sb.RUNTIME_TRACKER.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

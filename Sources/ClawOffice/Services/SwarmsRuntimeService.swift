@@ -147,6 +147,7 @@ struct SwarmsProviderPayload: Codable, Sendable {
     var authStyle: String
     var modelName: String
     var fallbackModels: [String]
+    var timeoutSeconds: Int?
 
     enum CodingKeys: String, CodingKey {
         case kind
@@ -156,6 +157,7 @@ struct SwarmsProviderPayload: Codable, Sendable {
         case authStyle = "auth_style"
         case modelName = "model_name"
         case fallbackModels = "fallback_models"
+        case timeoutSeconds = "timeout_seconds"
     }
 }
 
@@ -183,6 +185,24 @@ struct SwarmsAgentPayload: Codable, Sendable {
     }
 }
 
+struct SwarmsRetryPolicy: Codable, Sendable {
+    var maxRetries: Int
+    var initialDelay: Double
+    var multiplier: Double
+
+    enum CodingKeys: String, CodingKey {
+        case maxRetries = "max_retries"
+        case initialDelay = "initial_delay"
+        case multiplier
+    }
+
+    init(maxRetries: Int = 3, initialDelay: Double = 1.0, multiplier: Double = 2.0) {
+        self.maxRetries = maxRetries
+        self.initialDelay = initialDelay
+        self.multiplier = multiplier
+    }
+}
+
 struct SwarmsRunRequestPayload: Codable, Sendable {
     var task: String
     var swarmType: String
@@ -192,6 +212,7 @@ struct SwarmsRunRequestPayload: Codable, Sendable {
     var allowLocalEdits: Bool
     var agents: [SwarmsAgentPayload]
     var director: SwarmsAgentPayload?
+    var retryPolicy: SwarmsRetryPolicy?
 
     enum CodingKeys: String, CodingKey {
         case task
@@ -202,6 +223,7 @@ struct SwarmsRunRequestPayload: Codable, Sendable {
         case allowLocalEdits = "allow_local_edits"
         case agents
         case director
+        case retryPolicy = "retry_policy"
     }
 }
 

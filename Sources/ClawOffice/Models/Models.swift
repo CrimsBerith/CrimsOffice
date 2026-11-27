@@ -1758,6 +1758,21 @@ struct OfficeCronJob: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+struct AutonomousSprintSession: Identifiable, Codable, Sendable {
+    var id: UUID = UUID()
+    var agentId: UUID
+    var goal: String
+    var currentIteration: Int = 0
+    var maxIterations: Int
+    var status: SessionStatus = .running
+    var lastUpdate: Date = Date()
+    var snapshotContext: String = ""
+
+    enum SessionStatus: String, Codable {
+        case running, paused, completed, failed
+    }
+}
+
 struct OpenClawSessionSummary: Identifiable, Hashable, Sendable {
     let id: String
     let agentId: String

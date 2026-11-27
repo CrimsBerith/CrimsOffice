@@ -84,16 +84,18 @@ class SwarmCancelledError(RuntimeError):
 
 
 class RuntimeLoadTracker:
-    """Thread-safe shared cooldown and in-flight load tracker across Swarms calls."""
+    """Thread-safe shared cooldown, provider concurrency cap, and in-flight load tracker across Swarms calls."""
 
     def __init__(self) -> None:
         import threading
         self._lock = threading.RLock()
+        self._cond = threading.Condition(self._lock)
         self._model_cooldowns: Dict[Tuple[str, str, str], float] = {}
         self._model_errors: Dict[Tuple[str, str, str], int] = {}
         self._provider_cooldowns: Dict[Tuple[str, str], float] = {}
         self._provider_errors: Dict[Tuple[str, str], int] = {}
         self._in_flight: Dict[Tuple[str, str, str], int] = {}
+        self._provider_in_flight: Dict[Tuple[str, str], int] = {}
 
     @staticmethod
     def _prov_key(prov: ProviderSpec) -> Tuple[str, str]:
@@ -103,16 +105,60 @@ class RuntimeLoadTracker:
     def _cand_key(cls, prov: ProviderSpec, model: str) -> Tuple[str, str, str]:
         return (prov.kind, (prov.base_url or "").strip().rstrip("/"), model.strip())
 
+    @staticmethod
+    def provider_concurrency_limit(prov: ProviderSpec) -> int:
+        # Leave 1 slot headroom under EVREN's 4-concurrent account limit for interactive UI turns
+        if prov.kind == "evren":
+            return 3
+        if prov.kind == "antigravityCLI":
+            return 2
+        return 4
+
+    def provider_in_flight(self, prov: ProviderSpec) -> int:
+        pk = self._prov_key(prov)
+        with self._lock:
+            return self._provider_in_flight.get(pk, 0)
+
+    def acquire_provider_slot(
+        self,
+        prov: ProviderSpec,
+        model: str,
+        max_wait: float = 8.0,
+        cancel_check: Optional[Any] = None,
+    ) -> bool:
+        pk = self._prov_key(prov)
+        ck = self._cand_key(prov, model)
+        limit = max(1, self.provider_concurrency_limit(prov))
+        deadline = time.time() + max(0.0, max_wait)
+        with self._cond:
+            while True:
+                if cancel_check and cancel_check():
+                    raise SwarmCancelledError("Swarm görevi kullanıcı tarafından iptal edildi.")
+                if self._provider_in_flight.get(pk, 0) < limit:
+                    self._in_flight[ck] = self._in_flight.get(ck, 0) + 1
+                    self._provider_in_flight[pk] = self._provider_in_flight.get(pk, 0) + 1
+                    return True
+                rem = deadline - time.time()
+                if rem <= 0:
+                    return False
+                self._cond.wait(timeout=min(0.25, rem))
+
     def begin_in_flight(self, prov: ProviderSpec, model: str) -> None:
+        pk = self._prov_key(prov)
         ck = self._cand_key(prov, model)
         with self._lock:
             self._in_flight[ck] = self._in_flight.get(ck, 0) + 1
+            self._provider_in_flight[pk] = self._provider_in_flight.get(pk, 0) + 1
 
     def end_in_flight(self, prov: ProviderSpec, model: str) -> None:
+        pk = self._prov_key(prov)
         ck = self._cand_key(prov, model)
-        with self._lock:
+        with self._cond:
             cur = self._in_flight.get(ck, 0)
             self._in_flight[ck] = max(0, cur - 1)
+            p_cur = self._provider_in_flight.get(pk, 0)
+            self._provider_in_flight[pk] = max(0, p_cur - 1)
+            self._cond.notify_all()
 
     def mark_success(self, prov: ProviderSpec, model: str) -> None:
         pk = self._prov_key(prov)
@@ -128,7 +174,10 @@ class RuntimeLoadTracker:
         ck = self._cand_key(prov, model)
         is_fatal = _is_provider_fatal_error(exc)
         low = str(exc).lower()
-        is_rate = any(k in low for k in ("429", "rate limit", "too many", "quota", "overloaded", "busy", "capacity"))
+        is_rate = any(k in low for k in (
+            "429", "rate limit", "ratelimiterror", "too many",
+            "quota", "overloaded", "busy", "capacity", "eşzamanlı", "yoğun",
+        ))
         now = time.time()
         with self._lock:
             m_err = self._model_errors.get(ck, 0) + 1
@@ -142,7 +191,7 @@ class RuntimeLoadTracker:
             p_err = self._provider_errors.get(pk, 0) + 1
             self._provider_errors[pk] = p_err
             if is_fatal:
-                self._provider_cooldowns[pk] = now + 120.0
+                self._provider_cooldowns[pk] = now + 300.0
             elif p_err >= 2:
                 self._provider_cooldowns[pk] = now + 45.0
         return is_fatal
@@ -167,8 +216,8 @@ class RuntimeLoadTracker:
     def order_candidates(self, candidates: List[Tuple[ProviderSpec, str]]) -> List[Tuple[ProviderSpec, str]]:
         now = time.time()
         with self._lock:
-            idle_uncooled: List[Tuple[int, Tuple[ProviderSpec, str]]] = []
-            busy_uncooled: List[Tuple[int, int, Tuple[ProviderSpec, str]]] = []
+            idle_uncooled: List[Tuple[int, int, int, Tuple[ProviderSpec, str]]] = []
+            busy_uncooled: List[Tuple[int, int, int, int, Tuple[ProviderSpec, str]]] = []
             cooled: List[Tuple[float, int, Tuple[ProviderSpec, str]]] = []
             for idx, (prov, model) in enumerate(candidates):
                 pk = self._prov_key(prov)
@@ -180,26 +229,30 @@ class RuntimeLoadTracker:
                     cooled.append((until, idx, (prov, model)))
                 else:
                     inflight = self._in_flight.get(ck, 0)
+                    p_inflight = self._provider_in_flight.get(pk, 0)
+                    p_saturated = 1 if p_inflight >= self.provider_concurrency_limit(prov) else 0
                     if inflight == 0:
-                        idle_uncooled.append((idx, (prov, model)))
+                        idle_uncooled.append((p_saturated, p_inflight, idx, (prov, model)))
                     else:
-                        busy_uncooled.append((inflight, idx, (prov, model)))
-            idle_uncooled.sort(key=lambda x: x[0])
-            busy_uncooled.sort(key=lambda x: (x[0], x[1]))
+                        busy_uncooled.append((p_saturated, inflight, p_inflight, idx, (prov, model)))
+            idle_uncooled.sort(key=lambda x: (x[0], x[1], x[2]))
+            busy_uncooled.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
             cooled.sort(key=lambda x: (x[0], x[1]))
             return (
-                [c for _, c in idle_uncooled]
-                + [c for _, _, c in busy_uncooled]
+                [c for _, _, _, c in idle_uncooled]
+                + [c for _, _, _, _, c in busy_uncooled]
                 + [c for _, _, c in cooled]
             )
 
     def clear(self) -> None:
-        with self._lock:
+        with self._cond:
             self._model_cooldowns.clear()
             self._model_errors.clear()
             self._provider_cooldowns.clear()
             self._provider_errors.clear()
             self._in_flight.clear()
+            self._provider_in_flight.clear()
+            self._cond.notify_all()
 
 
 RUNTIME_TRACKER = RuntimeLoadTracker()
@@ -213,6 +266,11 @@ class SwarmTelemetryCollector:
         self._lock = threading.Lock()
         self.failed_candidates: List[Dict[str, Any]] = []
         self.used_routes: List[Dict[str, Any]] = []
+        self.events: List[str] = []
+
+    def log_event(self, message: str) -> None:
+        with self._lock:
+            self.events.append(message[:240])
 
     def record_failure(self, prov: ProviderSpec, model: str, error: str, is_fatal: bool) -> None:
         with self._lock:
@@ -330,6 +388,7 @@ class ProviderSpec(BaseModel):
     auth_style: str = "bearer"
     model_name: str = "deepseek-v4.1-flash"
     fallback_models: List[str] = Field(default_factory=list)
+    timeout_seconds: Optional[int] = None
 
 
 class AgentSpec(BaseModel):
@@ -344,6 +403,7 @@ class AgentSpec(BaseModel):
     provider: ProviderSpec = Field(default_factory=ProviderSpec)
     fallback_provider: Optional[ProviderSpec] = None
     fallback_providers: List[ProviderSpec] = Field(default_factory=list)
+    retry_policy: Optional[Dict[str, Any]] = None
 
 
 class SwarmRunRequest(BaseModel):
@@ -357,6 +417,7 @@ class SwarmRunRequest(BaseModel):
     allow_local_edits: bool = False
     agents: List[AgentSpec] = Field(default_factory=list)
     director: Optional[AgentSpec] = None
+    retry_policy: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -661,6 +722,7 @@ class ResilientSwarmsLLM:
         timeout_seconds: int = 55,
         telemetry: Optional[SwarmTelemetryCollector] = None,
         cancel_check: Optional[Any] = None,
+        retry_policy: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.spec = spec
         self.workspace_path = workspace_path
@@ -668,6 +730,7 @@ class ResilientSwarmsLLM:
         self.timeout_seconds = timeout_seconds
         self.telemetry = telemetry
         self.cancel_check = cancel_check
+        self.retry_policy = retry_policy or {"max_attempts": 1, "initial_delay": 1, "multiplier": 2}
         self.candidates = _provider_candidates_for_spec(spec)
         self.model_name = (
             self.candidates[0][1]
@@ -725,7 +788,7 @@ class ResilientSwarmsLLM:
             extra_headers=headers or None,
             temperature=temp,
             max_tokens=4096,
-            timeout=self.timeout_seconds,
+            timeout=prov.timeout_seconds or self.timeout_seconds,
             drop_params=True,
             num_retries=0,
         )
@@ -762,46 +825,87 @@ class ResilientSwarmsLLM:
         secrets = [p.api_key for p, _ in ordered]
         sys_prompt = (self.spec.system_prompt or "").strip() or f"Sen {self.spec.name} ({self.spec.title}) uzman ajansın."
 
+        policy = self.retry_policy if isinstance(self.retry_policy, dict) else {}
+        raw_attempts = policy.get("max_attempts", policy.get("max_retries", policy.get("maxRetries", 1)))
+        max_attempts = max(1, min(3, int(raw_attempts or 1)))
+        initial_delay = max(0.05, float(policy.get("initial_delay", policy.get("initialDelay", 0.5)) or 0.5))
+        multiplier = max(1.0, float(policy.get("multiplier", 2.0) or 2.0))
+
         for idx, (prov, model) in enumerate(ordered):
             if self.cancel_check and self.cancel_check():
                 raise SwarmCancelledError("Swarm görevi kullanıcı tarafından iptal edildi.")
             prov_key = (prov.kind, prov.base_url.strip().rstrip("/"))
             if prov_key in failed_providers:
                 continue
-            RUNTIME_TRACKER.begin_in_flight(prov, model)
-            try:
-                if prov.kind == "antigravityCLI":
-                    cli = AntigravityCLILLM(
-                        model_name=model,
-                        system_prompt=sys_prompt,
-                        bin_hint=prov.base_url,
-                        cwd=self.workspace_path,
-                        allow_local_edits=self.allow_local_edits,
-                        timeout_seconds=max(90, self.timeout_seconds),
-                    )
-                    out = _strip_think_tags(cli.run(task=task, messages=messages))
-                    if not out:
-                        raise RuntimeError("Antigravity CLI boş çıktı döndürdü")
-                else:
-                    out = self._call_http_provider(prov, model, task=task, messages=messages)
-                RUNTIME_TRACKER.mark_success(prov, model)
-                self.last_used_model = model
-                self.last_used_provider = prov.name
-                self.model_name = model
-                if self.telemetry is not None:
-                    self.telemetry.record_success(prov, model, used_fallback=(idx > 0 or model != self.spec.model_name))
-                return out
-            except SwarmCancelledError:
-                raise
-            except Exception as exc:
-                is_fatal = RUNTIME_TRACKER.mark_failure(prov, model, exc)
-                err_safe = redact_secrets(str(exc), secrets)
-                errors.append(f"{prov.name}/{model}: {err_safe}")
-                if self.telemetry is not None:
-                    self.telemetry.record_failure(prov, model, err_safe, is_fatal)
-                if is_fatal:
-                    failed_providers.add(prov_key)
+
+            has_alt_provider = any(
+                (alt_p.kind, alt_p.base_url.strip().rstrip("/")) != prov_key
+                and (alt_p.kind, alt_p.base_url.strip().rstrip("/")) not in failed_providers
+                and not RUNTIME_TRACKER.is_cooled(alt_p, alt_m)
+                for alt_p, alt_m in ordered[idx + 1:]
+            )
+            slot_wait = 0.6 if has_alt_provider else min(10.0, max(2.0, float(self.timeout_seconds) * 0.2))
+            if not RUNTIME_TRACKER.acquire_provider_slot(
+                prov,
+                model,
+                max_wait=slot_wait,
+                cancel_check=self.cancel_check,
+            ):
+                errors.append(f"{prov.name}/{model}: eşzamanlı istek sınırı dolu")
                 continue
+
+            current_delay = initial_delay
+            try:
+                for attempt in range(max_attempts):
+                    if self.cancel_check and self.cancel_check():
+                        raise SwarmCancelledError("Swarm görevi kullanıcı tarafından iptal edildi.")
+                    try:
+                        if prov.kind == "antigravityCLI":
+                            cli = AntigravityCLILLM(
+                                model_name=model,
+                                system_prompt=sys_prompt,
+                                bin_hint=prov.base_url,
+                                cwd=self.workspace_path,
+                                allow_local_edits=self.allow_local_edits,
+                                timeout_seconds=max(90, self.timeout_seconds),
+                            )
+                            out = _strip_think_tags(cli.run(task=task, messages=messages))
+                            if not out:
+                                raise RuntimeError("Antigravity CLI boş çıktı döndürdü")
+                        else:
+                            out = self._call_http_provider(prov, model, task=task, messages=messages)
+
+                        if out:
+                            RUNTIME_TRACKER.mark_success(prov, model)
+                            self.last_used_model = model
+                            self.last_used_provider = prov.name
+                            self.model_name = model
+                            if self.telemetry is not None:
+                                self.telemetry.record_success(prov, model, used_fallback=(idx > 0 or model != self.spec.model_name))
+                            return out
+                        raise RuntimeError(f"{prov.name}/{model}: boş yanıt döndü")
+                    except SwarmCancelledError:
+                        raise
+                    except Exception as exc:
+                        is_fatal = RUNTIME_TRACKER.mark_failure(prov, model, exc)
+                        if is_fatal or attempt == max_attempts - 1:
+                            err_safe = redact_secrets(str(exc), secrets)
+                            errors.append(f"{prov.name}/{model}: {err_safe}")
+                            if self.telemetry is not None:
+                                self.telemetry.record_failure(prov, model, err_safe, is_fatal)
+                            if is_fatal:
+                                failed_providers.add(prov_key)
+                            break
+                        if self.telemetry is not None:
+                            self.telemetry.log_event(
+                                f"Retry {attempt + 1}/{max_attempts} for {prov.name}/{model} after {current_delay:.2f}s"
+                            )
+                        sleep_until = time.time() + current_delay
+                        while time.time() < sleep_until:
+                            if self.cancel_check and self.cancel_check():
+                                raise SwarmCancelledError("Swarm görevi kullanıcı tarafından iptal edildi.")
+                            time.sleep(min(0.15, max(0.0, sleep_until - time.time())))
+                        current_delay *= multiplier
             finally:
                 RUNTIME_TRACKER.end_in_flight(prov, model)
 
@@ -837,6 +941,7 @@ def build_swarms_agent(
         allow_local_edits=allow_local_edits,
         telemetry=telemetry,
         cancel_check=cancel_check,
+        retry_policy=getattr(spec, "retry_policy", None),
     )
     return Agent(
         agent_name=spec.name,
@@ -985,9 +1090,14 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
         msg = redact_secrets(str(exc), secrets)
         print(f"[swarms_bridge] ⚠️ {arch} fallback -> Sequential/Concurrent ({msg[:220]})", file=sys.stderr, flush=True)
 
+    def _with_req_retry(spec: AgentSpec) -> AgentSpec:
+        if spec.retry_policy is not None or req.retry_policy is None:
+            return spec
+        return spec.model_copy(update={"retry_policy": req.retry_policy})
+
     swarms_agents = [
         build_swarms_agent(
-            spec,
+            _with_req_retry(spec),
             workspace_path=req.workspace_path,
             allow_local_edits=req.allow_local_edits,
             telemetry=telemetry,

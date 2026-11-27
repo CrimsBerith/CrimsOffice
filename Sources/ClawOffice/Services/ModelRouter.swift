@@ -322,6 +322,10 @@ enum ModelRouter: Sendable {
             if provInFlight > 0 {
                 score -= Double(provInFlight) * 30.0
             }
+            if p.kind == .evren && provInFlight >= 3 {
+                score -= 220.0
+                reasons.append("EVREN eşzamanlı sınır(\(provInFlight)/4)")
+            }
 
             // Penalize piling all agents onto the exact same model when healthy alternatives exist
             let assignedCount = agentsPerModel[lowerM, default: 0]
@@ -362,9 +366,16 @@ enum ModelRouter: Sendable {
             return (score, reasons.joined(separator: ", "))
         }
 
+        // Filter out cooled candidates whenever any non-cooled healthy option exists in pool.
+        let uncooledPool = pool.filter { item in
+            let key = ModelRouteKey(providerId: item.provider.id, modelId: item.model)
+            return !isProviderCooled(item.provider.id) && (modelMetrics[key]?.isInCooldown(now: now) != true)
+        }
+        let scoringPool = uncooledPool.isEmpty ? pool : uncooledPool
+
         // Check if caller requested a specific exact model that is healthy, idle, and not oversaturated
         if !isAutoRequest,
-           let exactMatch = pool.first(where: { $0.model.lowercased() == lowerReq }) {
+           let exactMatch = scoringPool.first(where: { $0.model.lowercased() == lowerReq }) {
             let key = ModelRouteKey(providerId: exactMatch.provider.id, modelId: exactMatch.model)
             let metrics = modelMetrics[key]
             let isHealthy = exactMatch.provider.isEnabled
@@ -374,9 +385,14 @@ enum ModelRouter: Sendable {
                 && (metrics?.isInCooldown(now: now) != true)
                 && (metrics?.consecutiveErrors ?? 0) == 0
             let inFlight = metrics?.inFlightCount ?? 0
+            let provInFlight = modelMetrics
+                .filter { $0.key.providerId == exactMatch.provider.id }
+                .reduce(0) { $0 + $1.value.inFlightCount }
+            let evrenSaturated = exactMatch.provider.kind == .evren && provInFlight >= 3
             let assigned = agentsPerModel[exactMatch.model.lowercased(), default: 0]
-            let hasIdleHealthyAlternative = pool.contains { alt in
+            let hasIdleHealthyAlternative = scoringPool.contains { alt in
                 alt.model.lowercased() != exactMatch.model.lowercased()
+                && (!evrenSaturated || alt.provider.id != exactMatch.provider.id)
                 && !isProviderCooled(alt.provider.id)
                 && providerStatuses[alt.provider.id]?.isOnline != false
                 && (modelMetrics[ModelRouteKey(providerId: alt.provider.id, modelId: alt.model)]?.isInCooldown(now: now) != true)
@@ -390,7 +406,7 @@ enum ModelRouter: Sendable {
                 && specialty != .general
                 && hasIdleHealthyAlternative
 
-            if isHealthy && inFlight == 0 && (assigned == 0 || !hasIdleHealthyAlternative) && !isGenericDeepseekForSpecialist {
+            if isHealthy && inFlight == 0 && !(evrenSaturated && hasIdleHealthyAlternative) && (assigned == 0 || !hasIdleHealthyAlternative) && !isGenericDeepseekForSpecialist {
                 let fallbacks = buildDiverseFallbacks(
                     selected: exactMatch,
                     pool: pool,
@@ -406,8 +422,8 @@ enum ModelRouter: Sendable {
             }
         }
 
-        // Score entire pool and pick optimal role+load-balanced model
-        let scored = pool.map { item -> (provider: APIProviderConfig, model: String, score: Double, note: String) in
+        // Score uncooled pool (or full pool if every candidate is cooled) and pick optimal role+load-balanced model
+        let scored = scoringPool.map { item -> (provider: APIProviderConfig, model: String, score: Double, note: String) in
             let s = scoreCandidate(provider: item.provider, model: item.model)
             return (item.provider, item.model, s.score, s.note)
         }
@@ -425,7 +441,7 @@ enum ModelRouter: Sendable {
 
         let fallbacks = buildDiverseFallbacks(
             selected: (chosen.provider, chosen.model),
-            pool: scored.map { ($0.provider, $0.model) },
+            pool: pool,
             scoreCandidate: scoreCandidate
         )
 

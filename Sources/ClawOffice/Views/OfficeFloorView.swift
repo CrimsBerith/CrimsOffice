@@ -129,6 +129,8 @@ struct OfficeFloorView: View {
                     }
                 } label: {
                     Label("Caveman: \(engine.cavemanMode.rawValue)", systemImage: "bolt.shield.fill")
+                            .accessibilityLabel("Caveman Modu Ayarları")
+                            .accessibilityHint("\(engine.cavemanMode.rawValue) modu aktif. Tıklandığında mod değiştirilir.")
                 }
 
                 Menu {
@@ -147,14 +149,20 @@ struct OfficeFloorView: View {
                     }
                 } label: {
                     Label("Mac & Sistem", systemImage: "macbook.and.iphone")
+                            .accessibilityLabel("Sistem Kontrolleri")
+                            .accessibilityHint("Uygulamayı yeniden başlatma ve klasör açma seçeneklerini gösterir")
                 }
 
                 Button { engine.recallAllAgentsToDesks() } label: {
                     Label("Masalara Çağır", systemImage: "arrow.uturn.backward.circle")
+                            .accessibilityLabel("Tüm Ajanları Masalarına Çağır")
+                            .accessibilityHint("Dağınık haldeki tüm sanal ajanları başlangıç konumlarına döndürür")
                 }
 
                 Button { withAnimation { showInspector.toggle() } } label: {
                     Label("Panel", systemImage: "sidebar.right")
+                            .accessibilityLabel("Denetçi Paneli")
+                            .accessibilityHint("Sağ taraftaki detay panelini gizler veya gösterir")
                 }
             }
         }

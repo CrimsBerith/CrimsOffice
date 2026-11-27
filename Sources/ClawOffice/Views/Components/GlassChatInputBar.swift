@@ -98,6 +98,9 @@ struct GlassChatInputBar: View {
                 .buttonStyle(.plain)
                 .disabled(trimmedText.isEmpty || isBusy)
                 .help("Gönder (↵ veya ⌘↵ · Yeni satır: ⇧↵)")
+                .accessibilityLabel("Mesajı gönder")
+                .accessibilityHint("Yazdığınız mesajı sisteme iletir")
+                .keyboardShortcut(.return, modifiers: [.command])
 
                 if let onStop {
                     Button(action: onStop) {

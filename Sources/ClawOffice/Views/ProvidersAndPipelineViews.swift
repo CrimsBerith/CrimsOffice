@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct ProvidersSettingsView: View {
     @EnvironmentObject var engine: OfficeEngine
@@ -648,6 +649,7 @@ struct ActivityLogView: View {
     @EnvironmentObject var engine: OfficeEngine
     @State private var levelFilter: LogLevel? = nil
     @State private var searchQuery: String = ""
+    @State private var agentFilter: String = ""
 
     private var filteredLogs: [ActivityLogEntry] {
         engine.logs.filter { entry in
@@ -656,8 +658,13 @@ struct ActivityLogView: View {
             let matchesQuery = q.isEmpty
                 || entry.source.localizedCaseInsensitiveContains(q)
                 || entry.message.localizedCaseInsensitiveContains(q)
-            return matchesLevel && matchesQuery
+            let matchesAgent = agentFilter.isEmpty || entry.source == agentFilter
+            return matchesLevel && matchesQuery && matchesAgent
         }
+    }
+
+    private var uniqueAgents: [String] {
+        Array(Set(engine.logs.map { $0.source })).sorted()
     }
 
     private func levelColor(_ level: LogLevel) -> Color {
@@ -669,6 +676,57 @@ struct ActivityLogView: View {
         case .tool: return .purple
         case .evolve: return .cyan
         }
+    }
+
+    private func exportLogs(format: ExportFormat) {
+        let logs = filteredLogs
+        guard !logs.isEmpty else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format.utType]
+        let ts = Self.exportFilenameFormatter.string(from: Date())
+        panel.nameFieldStringValue = "activity_log_\(ts).\(format.fileExtension)"
+        panel.title = "Aktivite Günlüğünü Dışa Aktar (\(format.rawValue.uppercased()))"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let content = format == .csv ? generateCSV(logs) : generateJSON(logs)
+                try content.write(to: url, atomically: true, encoding: .utf8)
+            } catch {
+                print("Export failed: \(error)")
+            }
+        }
+    }
+
+    private static let exportFilenameFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyyMMdd_HHmmss"
+        return df
+    }()
+
+    private func generateCSV(_ logs: [ActivityLogEntry]) -> String {
+        var lines = ["timestamp,level,source,message"]
+        let formatter = ISO8601DateTimeFormatter()
+        func csvEscape(_ raw: String) -> String {
+            raw
+                .replacingOccurrences(of: "\"", with: "\"\"")
+                .replacingOccurrences(of: "\r\n", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+        }
+        for entry in logs {
+            let timestamp = formatter.string(from: entry.timestamp)
+            lines.append("\"\(timestamp)\",\"\(entry.level.rawValue)\",\"\(csvEscape(entry.source))\",\"\(csvEscape(entry.message))\"")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func generateJSON(_ logs: [ActivityLogEntry]) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try? encoder.encode(logs)
+        return String(data: data ?? Data(), encoding: .utf8) ?? "[]"
     }
 
     var body: some View {
@@ -690,6 +748,26 @@ struct ActivityLogView: View {
                         .padding(.horizontal, 9).padding(.vertical, 5)
                         .liquidGlassCard(cornerRadius: 9)
 
+                        if !uniqueAgents.isEmpty {
+                            Menu {
+                                Button("Tümü") { agentFilter = "" }
+                                Divider()
+                                ForEach(uniqueAgents, id: \.self) { agent in
+                                    Button(agent) { agentFilter = agent }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "person.2.fill").font(.caption)
+                                    Text(agentFilter.isEmpty ? "Ajan" : agentFilter)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                            }
+                            .liquidGlassCard(cornerRadius: 9)
+                            .menuStyle(.borderlessButton)
+                        }
+
                         Button("Kopyala") {
                             let dump = filteredLogs.map { "[\($0.level.rawValue)] \($0.source): \($0.message)" }.joined(separator: "\n")
                             NSPasteboard.general.clearContents()
@@ -698,6 +776,18 @@ struct ActivityLogView: View {
                         .liquidGlassButton(prominent: false)
                         .controlSize(.small)
                         .disabled(filteredLogs.isEmpty)
+
+                        Menu {
+                            Button("CSV") { exportLogs(format: .csv) }
+                            Button("JSON") { exportLogs(format: .json) }
+                        } label: {
+                            Label("Dışa Aktar", systemImage: "square.and.arrow.up")
+                                .font(.caption)
+                        }
+                        .liquidGlassButton(prominent: false)
+                        .controlSize(.small)
+                        .disabled(filteredLogs.isEmpty)
+                        .menuStyle(.borderlessButton)
 
                         Button("Temizle") {
                             engine.logs.removeAll()
@@ -762,4 +852,15 @@ struct ActivityLogView: View {
             }
         }
     }
+}
+
+private enum ExportFormat: String, CaseIterable {
+    case csv, json
+    var fileExtension: String { rawValue }
+    var utType: UTType { rawValue == "csv" ? .commaSeparatedText : .json }
+}
+
+private struct ISO8601DateTimeFormatter {
+    private let formatter = ISO8601DateFormatter()
+    func string(from date: Date) -> String { formatter.string(from: date) }
 }

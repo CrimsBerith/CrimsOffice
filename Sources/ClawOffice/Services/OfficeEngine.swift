@@ -561,7 +561,8 @@ final class OfficeEngine: ObservableObject {
             startAmbientLoop()
             startCronSchedulerLoop()
             checkProvidersHealth()
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
                 await refreshCLITools()
                 await scheduleGraphifyAutoIndexIfNeeded(for: self.workspacePath, incremental: false)
                 await ensureSwarmsRuntimeReady()
@@ -1922,7 +1923,7 @@ final class OfficeEngine: ObservableObject {
         modelMetrics[key] = m
     }
 
-    private func beginModelInFlight(providerId: UUID, modelId: String) {
+    func beginModelInFlight(providerId: UUID, modelId: String) {
         let key = ModelRouteKey(providerId: providerId, modelId: modelId)
         var m = modelMetrics[key, default: ModelRuntimeMetrics()]
         m.inFlightCount += 1
@@ -1930,11 +1931,38 @@ final class OfficeEngine: ObservableObject {
         modelMetrics[key] = m
     }
 
-    private func endModelInFlight(providerId: UUID, modelId: String) {
+    func endModelInFlight(providerId: UUID, modelId: String) {
         let key = ModelRouteKey(providerId: providerId, modelId: modelId)
         guard var m = modelMetrics[key] else { return }
         m.inFlightCount = max(0, m.inFlightCount - 1)
         modelMetrics[key] = m
+    }
+
+    func providerInFlightCount(_ providerId: UUID) -> Int {
+        modelMetrics
+            .filter { $0.key.providerId == providerId }
+            .reduce(0) { $0 + $1.value.inFlightCount }
+    }
+
+    static func isRateLimitErrorMessage(_ rawError: String) -> Bool {
+        let lower = rawError.lowercased()
+        let markers = [
+            "429", "rate limit", "ratelimiterror", "too many requests",
+            "quota", "capacity", "overloaded", "busy", "unavailable",
+            "eşzamanlı", "yoğun", "akışı durdu", "yanıt vermeyi durdurdu"
+        ]
+        return markers.contains { lower.contains($0) }
+    }
+
+    static func isFatalAuthOrNetworkMessage(_ rawError: String) -> Bool {
+        let lower = rawError.lowercased()
+        let markers = [
+            "http 401", "http 403", "unauthorized", "authentication",
+            "invalid token", "sign in again", "invalid url",
+            "geçersiz api", "api anahtarı", "could not connect",
+            "cannot connect", "cannot find host", "connection refused", "bulunamadı"
+        ]
+        return markers.contains { lower.contains($0) }
     }
 
     private func recordModelSuccess(providerId: UUID, modelId: String, latencyMs: Int) {
@@ -1952,31 +1980,9 @@ final class OfficeEngine: ObservableObject {
     }
 
     private func recordModelFailure(provider: APIProviderConfig, modelId: String, error: Error) {
-        let lower = error.localizedDescription.lowercased()
-        let isRateLimit = lower.contains("429")
-            || lower.contains("rate limit")
-            || lower.contains("too many requests")
-            || lower.contains("quota")
-            || lower.contains("capacity")
-            || lower.contains("overloaded")
-            || lower.contains("busy")
-            || lower.contains("unavailable")
-            || lower.contains("akışı durdu")
-            || lower.contains("yanıt vermeyi durdurdu")
-        let isAuthOrOffline = lower.contains("http 401")
-            || lower.contains("http 403")
-            || lower.contains("unauthorized")
-            || lower.contains("authentication")
-            || lower.contains("invalid token")
-            || lower.contains("sign in again")
-            || lower.contains("invalid url")
-            || lower.contains("geçersiz api")
-            || lower.contains("api anahtarı")
-            || lower.contains("could not connect")
-            || lower.contains("cannot connect")
-            || lower.contains("cannot find host")
-            || lower.contains("connection refused")
-            || lower.contains("bulunamadı")
+        let rawDesc = error.localizedDescription
+        let isRateLimit = Self.isRateLimitErrorMessage(rawDesc)
+        let isAuthOrOffline = Self.isFatalAuthOrNetworkMessage(rawDesc)
 
         let key = ModelRouteKey(providerId: provider.id, modelId: modelId)
         let prevErrs = modelMetrics[key]?.consecutiveErrors ?? 0
@@ -1993,7 +1999,7 @@ final class OfficeEngine: ObservableObject {
         providerConsecutiveErrors[provider.id] = provStreak
 
         if isAuthOrOffline {
-            markProviderCooldown(provider.id, seconds: 120)
+            markProviderCooldown(provider.id, seconds: 300)
         } else if provStreak >= 2 {
             // Back-to-back timeouts/stalls/5xx on the same gateway immediately yield to healthy providers
             markProviderCooldown(provider.id, seconds: 45)
@@ -2547,6 +2553,10 @@ final class OfficeEngine: ObservableObject {
 
         // Continuous Multi-Step Autonomous ReAct Loop (extended for multi-hour collaboration: 48 lead / 24 sub-delegate)
         let maxIterations = handoffDepth == 0 ? 48 : 24
+         
+         // Continuity Hook: Initialize Persistent Sprint Tracking
+         let sprintSessionId = UUID()
+         log(.info, source: agentName, "🚀 Long-Running Sprint Initialized. ID: \(sprintSessionId), Limit: \(maxIterations)")
         let maxAutoContinues = handoffDepth == 0 ? 8 : 0
         var activeModelName = res.resolvedModel
         var totalLatencyMs = res.latencyMs
@@ -3730,6 +3740,10 @@ final class OfficeEngine: ObservableObject {
         func inFlight(_ c: (provider: APIProviderConfig, model: String, isFallback: Bool)) -> Int {
             modelMetrics[ModelRouteKey(providerId: c.provider.id, modelId: c.model)]?.inFlightCount ?? 0
         }
+        func isProvSaturated(_ c: (provider: APIProviderConfig, model: String, isFallback: Bool)) -> Bool {
+            guard c.provider.kind == .evren else { return false }
+            return providerInFlightCount(c.provider.id) >= 3
+        }
 
         let healthy = candidates.filter { !isCandCooled($0) }
         let onlineHealthy = healthy.filter { isCandOnline($0) }
@@ -3738,9 +3752,19 @@ final class OfficeEngine: ObservableObject {
 
         let orderedOnlineHealthy: [(provider: APIProviderConfig, model: String, isFallback: Bool)]
         if preferIdleOverBusy {
-            let idle = onlineHealthy.filter { inFlight($0) == 0 }
-            let busy = onlineHealthy.filter { inFlight($0) > 0 }.sorted { inFlight($0) < inFlight($1) }
-            orderedOnlineHealthy = idle + busy
+            let underCapIdle = onlineHealthy.filter { inFlight($0) == 0 && !isProvSaturated($0) }
+            let busyOrSaturated = onlineHealthy
+                .filter { inFlight($0) > 0 || isProvSaturated($0) }
+                .sorted { lhs, rhs in
+                    let lSat = isProvSaturated(lhs) ? 1 : 0
+                    let rSat = isProvSaturated(rhs) ? 1 : 0
+                    if lSat != rSat { return lSat < rSat }
+                    let lIn = inFlight(lhs)
+                    let rIn = inFlight(rhs)
+                    if lIn != rIn { return lIn < rIn }
+                    return providerInFlightCount(lhs.provider.id) < providerInFlightCount(rhs.provider.id)
+                }
+            orderedOnlineHealthy = underCapIdle + busyOrSaturated
         } else {
             orderedOnlineHealthy = onlineHealthy
         }
@@ -3751,10 +3775,15 @@ final class OfficeEngine: ObservableObject {
         guard let telemetry else { return }
         for fail in telemetry.failedCandidates {
             guard let prov = providers.first(where: { $0.kind.rawValue == fail.providerKind || $0.name == fail.providerName }) else { continue }
-            if fail.isProviderFatal {
-                markProviderCooldown(prov.id, seconds: 120)
+            if fail.isProviderFatal || Self.isFatalAuthOrNetworkMessage(fail.error) {
+                markProviderCooldown(prov.id, seconds: 300)
             } else {
-                markModelCooldown(providerId: prov.id, modelId: fail.modelName, seconds: 45, isRateLimit: fail.error.lowercased().contains("429"))
+                markModelCooldown(
+                    providerId: prov.id,
+                    modelId: fail.modelName,
+                    seconds: 45,
+                    isRateLimit: Self.isRateLimitErrorMessage(fail.error)
+                )
             }
         }
         for used in telemetry.usedRoutes {

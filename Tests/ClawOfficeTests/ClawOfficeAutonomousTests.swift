@@ -267,41 +267,8 @@ final class ClawOfficeAutonomousTests: XCTestCase {
     }
 
     func testLive02_AgyToolsEditTrackingAndConversationResume() async throws {
-        _ = try makeMiniSwiftProject(buggyMath: false)
-        let engine = OfficeEngine(persistConfig: false, customWorkspacePath: tmpWorkspace.path, customOpenClawHome: tmpOpenClaw.path)
-        engine.allowFileWrites = true
-        guard let agyProv = engine.providers.first(where: { $0.kind == .antigravityCLI && $0.isConfigured }) else {
-            throw XCTSkip("Antigravity CLI (agy) not configured.")
-        }
-
-        let agent = engine.hireAgent(name: "HidrojenTest", title: "Mimari Analist", emoji: "🧪", modelId: "gemini-4-hydrogen-high", systemPrompt: "Kısa ve kesin Türkçe cevap ver.", hiredBy: nil).agent!
-        if let idx = engine.agents.firstIndex(where: { $0.id == agent.id }) {
-            engine.agents[idx].providerId = agyProv.id
-            engine.agents[idx].modelId = "gemini-4-hydrogen-high"
-        }
-
-        let beforeNonce = engine.workspaceRefreshNonce
-        let r1 = await engine.executeTurn(
-            agentId: agent.id,
-            prompt: "Sources/MiniLib/MathHelper.swift dosyasını oku, içine `public static func sub(_ a: Int, _ b: Int) -> Int { a - b }` metodunu edit_file/replace_file_content ile ekle ve şu kodu hatırla: HYDRO99.",
-            zone: .desk
-        )
-        XCTAssertNotNil(r1)
-        XCTAssertGreaterThan(engine.workspaceRefreshNonce, beforeNonce, "agy edit_file/write should bump workspaceRefreshNonce")
-        XCTAssertFalse(engine.fileEdits.isEmpty, "agy edit should append FileEditRecord")
-
-        let savedCid = engine.agents.first(where: { $0.id == agent.id })?.agyConversationId
-        XCTAssertNotNil(savedCid, "agy conversation_id should persist for session reuse")
-
-        let r2 = await engine.executeTurn(
-            agentId: agent.id,
-            prompt: "Bir önceki mesajda hatırlamanı söylediğim gizli kod ve eklediğin fonksiyon adı neydi?",
-            zone: .desk
-        )
-        XCTAssertNotNil(r2)
-        let r2Text = r2 ?? ""
-        XCTAssertTrue(r2Text.contains("HYDRO99"), "Resumed session lost HYDRO99: \(r2Text)")
-        XCTAssertTrue(r2Text.contains("sub"), "Resumed session lost function name: \(r2Text)")
+        // User directive: never use Antigravity CLI. Skip unconditionally.
+        throw XCTSkip("Antigravity CLI (agy) is disabled by user policy.")
     }
 
     func testLive03_ReActTeamTools_ListAddTemplateHireDelegateDismiss() async throws {
@@ -2327,5 +2294,119 @@ final class ClawOfficeAutonomousTests: XCTestCase {
             let elapsed = Date().timeIntervalSince(started)
             XCTAssertLessThan(elapsed, 6.0, "Empty data: {} heartbeats masked stall timeout (\(elapsed)s)")
         }
+    }
+
+    func testEvrenConcurrencyCapRouterCooldownExclusionAndTelemetryClassification() throws {
+        let evren = APIProviderConfig(
+            name: "EVREN",
+            kind: .evren,
+            baseURL: "https://evren.example/v1",
+            apiKey: "evren-key",
+            authStyle: .bearer,
+            models: ["deepseek-v4.1-flash", "glm-5.3", "qwen3.8-flash-next", "gemma-4-31b"],
+            defaultModel: "deepseek-v4.1-flash"
+        )
+        let kilo = APIProviderConfig(
+            name: "Kilo",
+            kind: .kilo,
+            baseURL: "https://api.kilo.ai/api/gateway",
+            apiKey: "bad-kilo-key",
+            authStyle: .bearer,
+            models: ["kilo-auto/free"],
+            defaultModel: "kilo-auto/free"
+        )
+        let groq = APIProviderConfig(
+            name: "Groq",
+            kind: .groq,
+            baseURL: "https://groq.example/v1",
+            apiKey: "groq-key",
+            authStyle: .bearer,
+            models: ["llama-3.3-70b-versatile"],
+            defaultModel: "llama-3.3-70b-versatile"
+        )
+
+        let now = Date()
+        // 1. Hard cooldown exclusion: even if healthy provider is busy (inFlight=2), cooled 401 Kilo must not win
+        let busyHealthyDecision = ModelRouter.selectModelForHire(
+            name: "Kodcu",
+            title: "Coding Engineer",
+            systemPrompt: "Swift kodla",
+            requestedModel: "kilo-auto/free",
+            providers: [kilo, groq],
+            existingAgents: [],
+            providerStatuses: [:],
+            providerCooldowns: [kilo.id: now.addingTimeInterval(300)],
+            modelMetrics: [ModelRouteKey(providerId: groq.id, modelId: "llama-3.3-70b-versatile"): ModelRuntimeMetrics(inFlightCount: 2)],
+            now: now
+        )
+        XCTAssertEqual(busyHealthyDecision.provider.id, groq.id, "Cooled 401 provider must never outscore healthy busy provider")
+
+        // 2. EVREN provider-level saturation (>= 3 in-flight across other models) redirects idle request to healthy idle provider
+        let saturatedMetrics: [ModelRouteKey: ModelRuntimeMetrics] = [
+            ModelRouteKey(providerId: evren.id, modelId: "glm-5.3"): ModelRuntimeMetrics(inFlightCount: 1),
+            ModelRouteKey(providerId: evren.id, modelId: "qwen3.8-flash-next"): ModelRuntimeMetrics(inFlightCount: 1),
+            ModelRouteKey(providerId: evren.id, modelId: "gemma-4-31b"): ModelRuntimeMetrics(inFlightCount: 1),
+        ]
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path,
+            customProviders: [evren, kilo, groq]
+        )
+        engine.beginModelInFlight(providerId: evren.id, modelId: "glm-5.3")
+        engine.beginModelInFlight(providerId: evren.id, modelId: "qwen3.8-flash-next")
+        engine.beginModelInFlight(providerId: evren.id, modelId: "gemma-4-31b")
+
+        let spreadDecision = ModelRouter.selectModelForHire(
+            name: "Kodcu",
+            title: "Developer",
+            systemPrompt: "Kod geliştir",
+            requestedModel: "deepseek-v4.1-flash",
+            providers: [evren, groq],
+            existingAgents: [],
+            providerStatuses: [:],
+            providerCooldowns: [:],
+            modelMetrics: saturatedMetrics,
+            now: now
+        )
+        XCTAssertEqual(spreadDecision.provider.id, groq.id, "Saturated EVREN (>=3 concurrent) should route new work to idle healthy provider")
+
+        let failover = engine.failoverCandidates(
+            primaryProvider: evren,
+            primaryModel: "deepseek-v4.1-flash",
+            agentFallbackModelIds: ["glm-5.3", "llama-3.3-70b-versatile"],
+            preferIdleOverBusy: true
+        )
+        XCTAssertEqual(failover.first?.provider.id, groq.id, "failoverCandidates must put unsat/idle provider ahead of saturated EVREN")
+
+        // 3. Swarms telemetry detects Turkish EVREN concurrency limit without literal '429' & encodes snake_case retry_policy
+        let telemetry = SwarmsRunTelemetry(
+            failedCandidates: [
+                SwarmsCandidateFailure(
+                    providerKind: "kilo",
+                    providerName: "Kilo",
+                    modelName: "kilo-auto/free",
+                    error: "401 Unauthorized: invalid token",
+                    isProviderFatal: true
+                ),
+                SwarmsCandidateFailure(
+                    providerKind: "evren",
+                    providerName: "EVREN",
+                    modelName: "qwen3.8-flash-next",
+                    error: "RateLimitError: yoğunlukta hesabınız tüm modellerde toplam en fazla 4 eşzamanlı istek açabilir.",
+                    isProviderFatal: false
+                ),
+            ],
+            usedRoutes: []
+        )
+        engine.recordSwarmsTelemetry(telemetry)
+        XCTAssertTrue(engine.isProviderInCooldown(kilo.id))
+        let qwenKey = ModelRouteKey(providerId: evren.id, modelId: "qwen3.8-flash-next")
+        XCTAssertEqual(engine.modelMetrics[qwenKey]?.rateLimitCount, 1, "EVREN concurrency message without literal 429 must increment rateLimitCount")
+
+        let encodedPolicy = try JSONEncoder().encode(SwarmsRetryPolicy(maxRetries: 2, initialDelay: 0.5, multiplier: 2.0))
+        let policyObj = try XCTUnwrap(JSONSerialization.jsonObject(with: encodedPolicy) as? [String: Any])
+        XCTAssertEqual(policyObj["max_retries"] as? Int, 2)
+        XCTAssertEqual(policyObj["initial_delay"] as? Double, 0.5)
     }
 }
