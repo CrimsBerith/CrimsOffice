@@ -16,8 +16,9 @@ swarms-runtime/__pycache__/
 .pytest_cache/
 swarms-runtime/workspace/
 
-# Local backups, OS metadata & logs
+# Local backups, graphify generated artifacts, OS metadata & logs
 .clawoffice-backups/
+graphify-out/
 .DS_Store
 *.log
 *.tmp

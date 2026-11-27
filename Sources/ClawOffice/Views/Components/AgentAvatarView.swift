@@ -103,92 +103,135 @@ struct CrimsBrandLogoView: View {
     }
 }
 
-// MARK: - 10 Bikinili Karakter Stil Profili
+// MARK: - 10 Chibi Geliştirici Stil Profili
 
-private struct BikiniCharacterStyle {
+private struct ChibiCharacterStyle {
+    enum OutfitKind {
+        case hoodie, aloha, tee, floral, denim, cardigan, jacket
+    }
+    enum HairStyle {
+        case spikyShort, neatShort, fluffyWaves, longWavy, twinTails, ponytail, bob
+    }
+    enum AccessoryKind {
+        case headsetMic, headset, glassesHeadset, visorHeadset
+    }
+
     let skinLight: Color
     let skin: Color
     let skinShade: Color
     let hair: Color
     let hairDeep: Color
     let hairHighlight: Color
-    let bikiniPrimary: Color
-    let bikiniDeep: Color
-    let bikiniTrim: Color
-    let lipTint: Color
-    let hairLength: CGFloat
+    let topPrimary: Color
+    let topDeep: Color
+    let topAccent: Color
+    let shortsColor: Color
+    let shoeColor: Color
+    let headsetColor: Color
+    let eyeColor: Color
+    let hairStyle: HairStyle
+    let outfit: OutfitKind
     let accessory: AccessoryKind
 
-    enum AccessoryKind {
-        case tablet, headphones, coffee, notepad, sunglasses, laptop, watch
-    }
-
-    static func resolve(assetName: String, fallbackAccent: String) -> BikiniCharacterStyle {
+    static func resolve(assetName: String, fallbackAccent: String) -> ChibiCharacterStyle {
         switch assetName {
         case "bikini_crimson":
-            return .init(skinLight: Color(hex: "#FCDCC6"), skin: Color(hex: "#F4C9AD"), skinShade: Color(hex: "#D99F7E"),
-                         hair: Color(hex: "#2B1917"), hairDeep: Color(hex: "#170C0B"), hairHighlight: Color(hex: "#6B3D36"),
-                         bikiniPrimary: Color(hex: "#E11D48"), bikiniDeep: Color(hex: "#9F1239"), bikiniTrim: Color(hex: "#FDA4AF"),
-                         lipTint: Color(hex: "#D94A64"), hairLength: 1.18, accessory: .tablet)
+            return .init(
+                skinLight: Color(hex: "#FDE2CF"), skin: Color(hex: "#F5CBB0"), skinShade: Color(hex: "#DFA584"),
+                hair: Color(hex: "#523225"), hairDeep: Color(hex: "#2E1A13"), hairHighlight: Color(hex: "#7D4E3B"),
+                topPrimary: Color(hex: "#8F2535"), topDeep: Color(hex: "#671624"), topAccent: .white,
+                shortsColor: Color(hex: "#5D6C7D"), shoeColor: Color(hex: "#5A3D36"), headsetColor: Color(hex: "#8FA8C8"),
+                eyeColor: Color(hex: "#4B2B1C"), hairStyle: .spikyShort, outfit: .hoodie, accessory: .headsetMic
+            )
         case "bikini_cyan":
-            return .init(skinLight: Color(hex: "#FFE3CE"), skin: Color(hex: "#F7D3BA"), skinShade: Color(hex: "#DDA98A"),
-                         hair: Color(hex: "#E6BE7E"), hairDeep: Color(hex: "#BA8E4F"), hairHighlight: Color(hex: "#FFF3D2"),
-                         bikiniPrimary: Color(hex: "#06B6D4"), bikiniDeep: Color(hex: "#0E7490"), bikiniTrim: Color(hex: "#A5F3FC"),
-                         lipTint: Color(hex: "#E06B7D"), hairLength: 1.04, accessory: .headphones)
+            return .init(
+                skinLight: Color(hex: "#F2C7A7"), skin: Color(hex: "#E1AC84"), skinShade: Color(hex: "#BE8359"),
+                hair: Color(hex: "#232B38"), hairDeep: Color(hex: "#121720"), hairHighlight: Color(hex: "#4A5973"),
+                topPrimary: Color(hex: "#DF7241"), topDeep: Color(hex: "#B54A22"), topAccent: Color(hex: "#F6BE65"),
+                shortsColor: Color(hex: "#4F5B69"), shoeColor: Color(hex: "#435368"), headsetColor: Color(hex: "#38414E"),
+                eyeColor: Color(hex: "#234978"), hairStyle: .neatShort, outfit: .aloha, accessory: .glassesHeadset
+            )
         case "bikini_mint":
-            return .init(skinLight: Color(hex: "#F5CBB0"), skin: Color(hex: "#E8B594"), skinShade: Color(hex: "#C58B67"),
-                         hair: Color(hex: "#3D2314"), hairDeep: Color(hex: "#211209"), hairHighlight: Color(hex: "#784C2F"),
-                         bikiniPrimary: Color(hex: "#10B981"), bikiniDeep: Color(hex: "#047857"), bikiniTrim: Color(hex: "#A7F3D0"),
-                         lipTint: Color(hex: "#CD5B69"), hairLength: 0.94, accessory: .coffee)
+            return .init(
+                skinLight: Color(hex: "#FFE4D1"), skin: Color(hex: "#F6CEB4"), skinShade: Color(hex: "#DDA585"),
+                hair: Color(hex: "#F0C35A"), hairDeep: Color(hex: "#C59333"), hairHighlight: Color(hex: "#FFF0B3"),
+                topPrimary: Color(hex: "#1CCBB7"), topDeep: Color(hex: "#0D9A8D"), topAccent: .white,
+                shortsColor: Color(hex: "#EA6A5E"), shoeColor: Color(hex: "#397976"), headsetColor: Color(hex: "#6E8547"),
+                eyeColor: Color(hex: "#1E6F64"), hairStyle: .fluffyWaves, outfit: .tee, accessory: .headset
+            )
         case "bikini_lavender":
-            return .init(skinLight: Color(hex: "#FFE6D8"), skin: Color(hex: "#F8D7C4"), skinShade: Color(hex: "#DCB097"),
-                         hair: Color(hex: "#2B2138"), hairDeep: Color(hex: "#17111F"), hairHighlight: Color(hex: "#6E588A"),
-                         bikiniPrimary: Color(hex: "#A855F7"), bikiniDeep: Color(hex: "#7E22CE"), bikiniTrim: Color(hex: "#E9D5FF"),
-                         lipTint: Color(hex: "#D65C82"), hairLength: 1.22, accessory: .notepad)
+            return .init(
+                skinLight: Color(hex: "#FFE6D8"), skin: Color(hex: "#F9D6C3"), skinShade: Color(hex: "#DEB097"),
+                hair: Color(hex: "#71452C"), hairDeep: Color(hex: "#4A2A1A"), hairHighlight: Color(hex: "#9E6644"),
+                topPrimary: Color(hex: "#4ED16E"), topDeep: Color(hex: "#2CA34B"), topAccent: Color(hex: "#FCEB6E"),
+                shortsColor: Color(hex: "#F2695E"), shoeColor: .white, headsetColor: Color(hex: "#BD7CE6"),
+                eyeColor: Color(hex: "#522E1C"), hairStyle: .longWavy, outfit: .floral, accessory: .headsetMic
+            )
         case "bikini_gold":
-            return .init(skinLight: Color(hex: "#F2C4A0"), skin: Color(hex: "#E4AC84"), skinShade: Color(hex: "#BF835A"),
-                         hair: Color(hex: "#D6A354"), hairDeep: Color(hex: "#A27430"), hairHighlight: Color(hex: "#FDE8B0"),
-                         bikiniPrimary: Color(hex: "#F59E0B"), bikiniDeep: Color(hex: "#B45309"), bikiniTrim: Color(hex: "#FFFFFF"),
-                         lipTint: Color(hex: "#CF5E62"), hairLength: 1.12, accessory: .sunglasses)
+            return .init(
+                skinLight: Color(hex: "#FFE2CD"), skin: Color(hex: "#F5CEB5"), skinShade: Color(hex: "#D6A183"),
+                hair: Color(hex: "#D89E54"), hairDeep: Color(hex: "#A56F2F"), hairHighlight: Color(hex: "#F8D59B"),
+                topPrimary: Color(hex: "#6991BB"), topDeep: Color(hex: "#456891"), topAccent: .white,
+                shortsColor: Color(hex: "#AE956C"), shoeColor: Color(hex: "#7E6753"), headsetColor: Color(hex: "#B8852C"),
+                eyeColor: Color(hex: "#9E7324"), hairStyle: .neatShort, outfit: .denim, accessory: .glassesHeadset
+            )
         case "bikini_coral":
-            return .init(skinLight: Color(hex: "#FCD5BC"), skin: Color(hex: "#F2C3A3"), skinShade: Color(hex: "#D19774"),
-                         hair: Color(hex: "#753120"), hairDeep: Color(hex: "#461A10"), hairHighlight: Color(hex: "#B8593E"),
-                         bikiniPrimary: Color(hex: "#FB7185"), bikiniDeep: Color(hex: "#BE123C"), bikiniTrim: Color(hex: "#FFE4E6"),
-                         lipTint: Color(hex: "#E2556F"), hairLength: 1.08, accessory: .laptop)
+            return .init(
+                skinLight: Color(hex: "#FFE6DA"), skin: Color(hex: "#F7D3C2"), skinShade: Color(hex: "#DAAB95"),
+                hair: Color(hex: "#CD6A4B"), hairDeep: Color(hex: "#964129"), hairHighlight: Color(hex: "#EE9A7C"),
+                topPrimary: Color(hex: "#ED756D"), topDeep: Color(hex: "#C54C47"), topAccent: Color(hex: "#FBB4AC"),
+                shortsColor: Color(hex: "#314262"), shoeColor: .white, headsetColor: Color(hex: "#F08C75"),
+                eyeColor: Color(hex: "#2B3C4E"), hairStyle: .bob, outfit: .tee, accessory: .headsetMic
+            )
         case "bikini_cobalt":
-            return .init(skinLight: Color(hex: "#FFE1CD"), skin: Color(hex: "#F5CEB5"), skinShade: Color(hex: "#D69E7F"),
-                         hair: Color(hex: "#1A1D28"), hairDeep: Color(hex: "#0D0F16"), hairHighlight: Color(hex: "#46506B"),
-                         bikiniPrimary: Color(hex: "#3B82F6"), bikiniDeep: Color(hex: "#1D4ED8"), bikiniTrim: Color(hex: "#BFDBFE"),
-                         lipTint: Color(hex: "#D85E75"), hairLength: 1.16, accessory: .tablet)
+            return .init(
+                skinLight: Color(hex: "#FFE1CD"), skin: Color(hex: "#F3CAAD"), skinShade: Color(hex: "#D09978"),
+                hair: Color(hex: "#191E2A"), hairDeep: Color(hex: "#0D1017"), hairHighlight: Color(hex: "#3D4963"),
+                topPrimary: Color(hex: "#E6ECF5"), topDeep: Color(hex: "#2566D8"), topAccent: Color(hex: "#2566D8"),
+                shortsColor: Color(hex: "#2A303C"), shoeColor: Color(hex: "#265CD0"), headsetColor: Color(hex: "#2A68DF"),
+                eyeColor: Color(hex: "#1F58C4"), hairStyle: .spikyShort, outfit: .jacket, accessory: .visorHeadset
+            )
         case "bikini_rosegold":
-            return .init(skinLight: Color(hex: "#FAD4BC"), skin: Color(hex: "#EDC0A3"), skinShade: Color(hex: "#CC9270"),
-                         hair: Color(hex: "#523029"), hairDeep: Color(hex: "#2D1814"), hairHighlight: Color(hex: "#9B6254"),
-                         bikiniPrimary: Color(hex: "#EC4899"), bikiniDeep: Color(hex: "#BE185D"), bikiniTrim: Color(hex: "#FDE68A"),
-                         lipTint: Color(hex: "#E05288"), hairLength: 1.24, accessory: .watch)
+            return .init(
+                skinLight: Color(hex: "#FFE9E3"), skin: Color(hex: "#F9D9D0"), skinShade: Color(hex: "#DEB0A4"),
+                hair: Color(hex: "#C8B8BE"), hairDeep: Color(hex: "#95838A"), hairHighlight: Color(hex: "#EFE5E8"),
+                topPrimary: Color(hex: "#F6A7B5"), topDeep: Color(hex: "#D8788B"), topAccent: .white,
+                shortsColor: Color(hex: "#7393BA"), shoeColor: Color(hex: "#E4D4CE"), headsetColor: Color(hex: "#D99280"),
+                eyeColor: Color(hex: "#7A3B51"), hairStyle: .twinTails, outfit: .cardigan, accessory: .headsetMic
+            )
         case "bikini_ruby":
-            return .init(skinLight: Color(hex: "#EBB594"), skin: Color(hex: "#DC9E79"), skinShade: Color(hex: "#B2724E"),
-                         hair: Color(hex: "#1A1518"), hairDeep: Color(hex: "#0B090B"), hairHighlight: Color(hex: "#5E313D"),
-                         bikiniPrimary: Color(hex: "#DC2626"), bikiniDeep: Color(hex: "#991B1B"), bikiniTrim: Color(hex: "#18181B"),
-                         lipTint: Color(hex: "#C73A4A"), hairLength: 0.98, accessory: .coffee)
+            return .init(
+                skinLight: Color(hex: "#FFE2CD"), skin: Color(hex: "#F4CAAE"), skinShade: Color(hex: "#D39D7D"),
+                hair: Color(hex: "#1D2129"), hairDeep: Color(hex: "#0E1015"), hairHighlight: Color(hex: "#454E5E"),
+                topPrimary: Color(hex: "#2F323B"), topDeep: Color(hex: "#1D1E24"), topAccent: Color(hex: "#B9313F"),
+                shortsColor: Color(hex: "#2B2E36"), shoeColor: Color(hex: "#22242A"), headsetColor: Color(hex: "#363A44"),
+                eyeColor: Color(hex: "#2E303A"), hairStyle: .neatShort, outfit: .tee, accessory: .headsetMic
+            )
         case "bikini_emerald":
-            return .init(skinLight: Color(hex: "#FCDBC4"), skin: Color(hex: "#F3C8AC"), skinShade: Color(hex: "#D29674"),
-                         hair: Color(hex: "#3A231A"), hairDeep: Color(hex: "#1F120D"), hairHighlight: Color(hex: "#7A4B38"),
-                         bikiniPrimary: Color(hex: "#14B8A6"), bikiniDeep: Color(hex: "#0F766E"), bikiniTrim: Color(hex: "#CCFBF1"),
-                         lipTint: Color(hex: "#D96073"), hairLength: 1.16, accessory: .headphones)
+            return .init(
+                skinLight: Color(hex: "#D69772"), skin: Color(hex: "#B97954"), skinShade: Color(hex: "#8F5638"),
+                hair: Color(hex: "#46281A"), hairDeep: Color(hex: "#28140C"), hairHighlight: Color(hex: "#6F432D"),
+                topPrimary: Color(hex: "#5CD3A6"), topDeep: Color(hex: "#32A87E"), topAccent: .white,
+                shortsColor: Color(hex: "#273149"), shoeColor: .white, headsetColor: Color(hex: "#33B389"),
+                eyeColor: Color(hex: "#3C2012"), hairStyle: .ponytail, outfit: .hoodie, accessory: .headsetMic
+            )
         default:
-            return .init(skinLight: Color(hex: "#FCDCC6"), skin: Color(hex: "#F4C9AD"), skinShade: Color(hex: "#D99F7E"),
-                         hair: Color(hex: "#2B1917"), hairDeep: Color(hex: "#170C0B"), hairHighlight: Color(hex: "#6B3D36"),
-                         bikiniPrimary: Color(hex: fallbackAccent), bikiniDeep: Color(hex: fallbackAccent).opacity(0.75),
-                         bikiniTrim: .white.opacity(0.88), lipTint: Color(hex: "#D95A6E"),
-                         hairLength: 1.08, accessory: .tablet)
+            let col = Color(hex: fallbackAccent)
+            return .init(
+                skinLight: Color(hex: "#FDE2CF"), skin: Color(hex: "#F5CBB0"), skinShade: Color(hex: "#DFA584"),
+                hair: Color(hex: "#462B22"), hairDeep: Color(hex: "#281611"), hairHighlight: Color(hex: "#784C3D"),
+                topPrimary: col, topDeep: col.opacity(0.75), topAccent: .white,
+                shortsColor: Color(hex: "#434C5E"), shoeColor: .white, headsetColor: col,
+                eyeColor: Color(hex: "#3A2319"), hairStyle: .spikyShort, outfit: .hoodie, accessory: .headsetMic
+            )
         }
     }
 }
 
-// MARK: - 60 FPS Anatomik İncelen Uzuvlu, Gerçek Yürüyen Minik Bikinili Figür
+// MARK: - 60 FPS İnce Çizgili Anime-Chibi Yürüyen Geliştirici Figürü
 
-private struct ArticulatedBikiniWalkerCanvas: View {
-    let style: BikiniCharacterStyle
+private struct ArticulatedChibiWalkerCanvas: View {
+    let style: ChibiCharacterStyle
     let accent: Color
     let status: AgentStatus
     let statusColor: Color
@@ -199,20 +242,22 @@ private struct ArticulatedBikiniWalkerCanvas: View {
     let phaseOffset: Double
     let reduceMotion: Bool
 
+    private let inkColor = Color(hex: "#1D1724")
     private var isBusy: Bool { status.isBusy }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
-            let walkCycle = (t + phaseOffset) * 9.0
-            let idleCycle = (t + phaseOffset) * 2.1
+            let walkCycle = (t + phaseOffset) * 9.2
+            let idleCycle = (t + phaseOffset) * 2.2
 
             Canvas { ctx, size in
                 let w = size.width
                 let h = size.height
                 let cx = w * 0.5
-                let groundY = h * 0.92
+                let groundY = h * 0.93
                 let unit = h / 100.0
+                let inkW = max(1.0, 1.35 * unit)
 
                 let activeWalk = isWalking && !reduceMotion
                 let amp = activeWalk ? min(1.0, max(0.22, strideIntensity)) : 0.0
@@ -226,40 +271,27 @@ private struct ArticulatedBikiniWalkerCanvas: View {
                 let isErrorPose = !activeWalk && status == .error
 
                 let bob: CGFloat = {
-                    if activeWalk { return CGFloat(abs(sin(walkCycle)) * -3.1 * amp) * unit }
-                    if isErrorPose && !reduceMotion { return CGFloat(sin(t * 22.0) * 0.8) * unit }
-                    return CGFloat(sin(idleCycle) * -0.85) * unit
+                    if activeWalk { return CGFloat(abs(sin(walkCycle)) * -3.0 * amp) * unit }
+                    if isErrorPose && !reduceMotion { return CGFloat(sin(t * 24.0) * 0.8) * unit }
+                    return CGFloat(sin(idleCycle) * -0.7) * unit
                 }()
-                // Dururken doğal contrapposto ağırlık aktarımı; yürürken ritmik kalça salınımı
-                let hipSway: CGFloat = {
-                    if activeWalk { return CGFloat(cos(walkCycle) * 2.0 * amp) * unit }
-                    if isErrorPose && !reduceMotion { return CGFloat(sin(t * 26.0) * 1.1) * unit }
-                    return CGFloat(sin(idleCycle * 0.55) * 1.1) * unit
-                }()
-                let torsoLean: Double = {
-                    if activeWalk { return (0.068 + cos(walkCycle * 2) * 0.022) * amp }
-                    if isWorkingPose { return 0.075 }
-                    if isThinkingPose { return -0.025 }
-                    if isChatPose { return 0.02 + sin(idleCycle * 1.8) * 0.02 }
-                    return 0.0
-                }()
-                let hairWave = activeWalk
-                    ? CGFloat(sin(walkCycle - 0.85) * 4.5 * amp) * unit
-                    : CGFloat(sin(idleCycle - 0.5) * 1.35) * unit
-                let shadowScale = activeWalk ? (0.85 + 0.16 * abs(cos(walkCycle)) * amp) : 1.0
+                let hairBounce = activeWalk
+                    ? CGFloat(sin(walkCycle - 0.7) * 2.4 * amp) * unit
+                    : CGFloat(sin(idleCycle - 0.4) * 0.7) * unit
+                let shadowScale = activeWalk ? (0.86 + 0.14 * abs(cos(walkCycle)) * amp) : 1.0
 
-                // 1) Zemin temas gölgesi, yürüyüş adım halkası ve durum aurası
+                // 1) Zemin temas gölgesi & ışıklı seçim/yürüyüş halkası
                 let shadowRect = CGRect(
-                    x: cx - 16.5 * unit * shadowScale,
-                    y: groundY - 3.6 * unit,
-                    width: 33 * unit * shadowScale,
-                    height: 7.4 * unit
+                    x: cx - 17.5 * unit * shadowScale,
+                    y: groundY - 4.0 * unit,
+                    width: 35.0 * unit * shadowScale,
+                    height: 8.0 * unit
                 )
                 ctx.fill(
                     Path(ellipseIn: shadowRect),
                     with: .radialGradient(
                         Gradient(colors: [
-                            (isSelected || isWalking ? accent : Color.black).opacity(isSelected ? 0.46 : 0.34),
+                            (isSelected || isWalking ? accent : Color.black).opacity(isSelected ? 0.50 : 0.36),
                             .clear
                         ]),
                         center: CGPoint(x: shadowRect.midX, y: shadowRect.midY),
@@ -268,27 +300,26 @@ private struct ArticulatedBikiniWalkerCanvas: View {
                     )
                 )
 
-                // Yürürken zeminde yumuşak adım dalgası
                 if activeWalk {
                     let stepPhase = fmod(abs(walkCycle / .pi), 1.0)
-                    let rippleW = (14 + stepPhase * 22) * unit
-                    let rippleH = (3.4 + stepPhase * 5.2) * unit
+                    let rippleW = (16 + stepPhase * 22) * unit
+                    let rippleH = (4.0 + stepPhase * 5.2) * unit
                     let rippleRect = CGRect(x: cx - rippleW * 0.5, y: groundY - rippleH * 0.5, width: rippleW, height: rippleH)
                     ctx.stroke(
                         Path(ellipseIn: rippleRect),
-                        with: .color(accent.opacity((1.0 - stepPhase) * 0.48)),
-                        lineWidth: 1.15
+                        with: .color(Color.cyan.opacity((1.0 - stepPhase) * 0.55)),
+                        lineWidth: 1.2
                     )
                 }
 
                 if isWalking || isBusy || isSelected {
-                    let ringPulse = reduceMotion ? 1.0 : (0.96 + 0.09 * abs(sin(idleCycle)))
-                    let rw = 29.5 * unit * ringPulse
-                    let rh = 7.2 * unit * ringPulse
+                    let ringPulse = reduceMotion ? 1.0 : (0.96 + 0.08 * abs(sin(idleCycle)))
+                    let rw = 32.0 * unit * ringPulse
+                    let rh = 8.4 * unit * ringPulse
                     let ringRect = CGRect(x: cx - rw * 0.5, y: groundY - rh * 0.5, width: rw, height: rh)
                     ctx.stroke(
                         Path(ellipseIn: ringRect),
-                        with: .color((isWalking || isSelected ? accent : statusColor).opacity(0.76)),
+                        with: .color((isWalking || isSelected ? Color.cyan : statusColor).opacity(0.82)),
                         lineWidth: isSelected ? 2.0 : 1.35
                     )
                 }
@@ -300,550 +331,426 @@ private struct ArticulatedBikiniWalkerCanvas: View {
                     fig.scaleBy(x: -1, y: 1)
                 }
 
-                // Anatomik eklem merkezleri (doğal 7.5 baş oranlı zarif minyatür silüet)
-                let hipY = groundY - 41.5 * unit + bob
-                let hipCenter = CGPoint(x: cx + hipSway, y: hipY)
-                let waistCenter = CGPoint(x: hipCenter.x + CGFloat(torsoLean) * 7.5 * unit, y: hipY - 12.2 * unit)
-                let shoulderCenter = CGPoint(x: waistCenter.x + CGFloat(torsoLean) * 9.5 * unit, y: hipY - 25.0 * unit)
-                let headCenter = CGPoint(x: shoulderCenter.x + 0.7 * unit, y: shoulderCenter.y - 11.8 * unit)
+                // Chibi eklem merkezleri (~2.65:1 sevimli oran: büyük kafa, kompakt gövde ve adımlayan bacaklar)
+                let hipY = groundY - 22.5 * unit + bob
+                let hipCenter = CGPoint(x: cx, y: hipY)
+                let shoulderCenter = CGPoint(x: cx + (activeWalk ? CGFloat(amp) * 0.8 * unit : 0), y: hipY - 21.5 * unit)
+                let headCenter = CGPoint(x: shoulderCenter.x + 0.6 * unit, y: shoulderCenter.y - 19.5 * unit)
 
-                // Gerçek adım kinematiği: uyluk salınımı + diz bükülmesi + ayak bileği kaldırma
-                let backThighAngle = activeWalk ? oppStride * 0.48 : -0.07
-                let backKneeBend = activeWalk ? max(0.0, sin(walkCycle + .pi - 0.62)) * 0.68 * amp : 0.06
-                let frontThighAngle = activeWalk ? stride * 0.48 : 0.08
-                let frontKneeBend = activeWalk ? max(0.0, sin(walkCycle - 0.62)) * 0.68 * amp : 0.04
+                let backThigh = activeWalk ? oppStride * 0.48 : -0.06
+                let backKnee = activeWalk ? max(0.0, sin(walkCycle + .pi - 0.55)) * 0.65 * amp : 0.03
+                let frontThigh = activeWalk ? stride * 0.48 : 0.06
+                let frontKnee = activeWalk ? max(0.0, sin(walkCycle - 0.55)) * 0.65 * amp : 0.02
 
-                // Duruma özel tam gövde el-kol koreografisi
-                let backShoulderAngle: Double = {
-                    if activeWalk { return stride * 0.46 }
-                    if isWorkingPose && !reduceMotion { return -0.34 + cos(idleCycle * 4.4) * 0.06 }
-                    if isChatPose && !reduceMotion { return -0.26 + sin(idleCycle * 2.6) * 0.14 }
-                    return -0.16
+                let backShoulder: Double = {
+                    if activeWalk { return stride * 0.52 }
+                    if isWorkingPose && !reduceMotion { return -0.36 + cos(idleCycle * 4.5) * 0.08 }
+                    if isChatPose && !reduceMotion { return -0.25 + sin(idleCycle * 2.8) * 0.14 }
+                    return 0.16
                 }()
-                let backElbowBend: Double = {
-                    if activeWalk { return (0.24 + max(0, stride) * 0.34) * amp + 0.16 * (1 - amp) }
-                    if isWorkingPose { return 0.78 }
-                    if isChatPose { return 0.56 }
-                    return 0.26
+                let backElbow: Double = {
+                    if activeWalk { return 0.25 * amp + 0.12 }
+                    if isWorkingPose { return 0.80 }
+                    if isChatPose { return 0.55 }
+                    return 0.16
                 }()
-                let frontShoulderAngle: Double = {
-                    if activeWalk { return oppStride * 0.48 }
-                    if isWorkingPose && !reduceMotion { return -0.52 + sin(idleCycle * 5.0) * 0.08 }
-                    if isThinkingPose && !reduceMotion { return -0.82 + sin(idleCycle * 1.4) * 0.04 }
-                    if isChatPose && !reduceMotion { return -0.38 + sin(idleCycle * 3.2) * 0.22 }
+                let frontShoulder: Double = {
+                    if activeWalk { return oppStride * 0.52 }
+                    if isWorkingPose && !reduceMotion { return -0.52 + sin(idleCycle * 5.0) * 0.10 }
+                    if isThinkingPose && !reduceMotion { return -0.78 + sin(idleCycle * 1.4) * 0.05 }
+                    if isChatPose && !reduceMotion { return -0.42 + sin(idleCycle * 3.1) * 0.26 }
                     if isErrorPose { return -0.62 }
-                    return 0.12
+                    return -0.14
                 }()
-                let frontElbowBend: Double = {
-                    if activeWalk { return (0.26 + max(0, oppStride) * 0.36) * amp + 0.18 * (1 - amp) }
+                let frontElbow: Double = {
+                    if activeWalk { return 0.28 * amp + 0.14 }
                     if isWorkingPose { return 0.84 }
-                    if isThinkingPose { return 1.18 }
-                    if isChatPose { return 0.68 }
-                    if isErrorPose { return 0.92 }
-                    return 0.26
+                    if isThinkingPose { return 1.15 }
+                    if isChatPose { return 0.72 }
+                    if isErrorPose { return 0.90 }
+                    return 0.16
                 }()
 
-                // 2) Arka dalgalı saç hacmi
-                drawBackHair(&fig, head: headCenter, unit: unit, wave: hairWave)
+                // 2) Uzun/kuyruk arka saç (varsa)
+                drawChibiBackHair(&fig, head: headCenter, unit: unit, bounce: hairBounce)
 
-                // 3) Arka kol (incelen anatomik form)
-                drawTaperedArm(
+                // 3) Arka kol
+                drawChibiArm(
                     &fig,
-                    shoulder: CGPoint(x: shoulderCenter.x - 4.3 * unit, y: shoulderCenter.y + 1.5 * unit),
-                    upperAngle: backShoulderAngle,
-                    elbowBend: backElbowBend,
+                    shoulder: CGPoint(x: shoulderCenter.x - 8.2 * unit, y: shoulderCenter.y + 3.0 * unit),
+                    upperAngle: backShoulder,
+                    elbowBend: backElbow,
                     unit: unit,
-                    mainColor: style.skinShade,
-                    lightColor: style.skin,
-                    accessory: nil
+                    inkW: inkW,
+                    skin: style.skinShade,
+                    sleeve: style.topDeep
                 )
 
-                // 4) Arka bacak (şekilli uyluk + incelen baldır + zarif bilek + sandalet)
-                drawTaperedLeg(
+                // 4) Arka & ön adımlayan bacaklar + spor ayakkabılar
+                drawChibiLeg(
                     &fig,
-                    hip: CGPoint(x: hipCenter.x - 3.2 * unit, y: hipCenter.y + 1.2 * unit),
-                    thighAngle: backThighAngle,
-                    kneeBend: backKneeBend,
+                    hip: CGPoint(x: hipCenter.x - 4.0 * unit, y: hipCenter.y + 1.0 * unit),
+                    thighAngle: backThigh,
+                    kneeBend: backKnee,
                     unit: unit,
-                    mainColor: style.skinShade,
-                    lightColor: style.skin,
-                    sandalColor: style.bikiniDeep
+                    inkW: inkW,
+                    skin: style.skinShade
                 )
 
-                // 5) Doğal kıvrımlı, ışık-gölgeli gövde + detaylı bikini üst/alt
-                drawTorsoAndBikini(&fig, hip: hipCenter, waist: waistCenter, shoulder: shoulderCenter, unit: unit)
+                // 5) Şort + Gövde / Hoodie / Tişört
+                drawChibiTorsoAndShorts(&fig, hip: hipCenter, shoulder: shoulderCenter, unit: unit, inkW: inkW)
 
-                // 6) Ön bacak
-                drawTaperedLeg(
+                drawChibiLeg(
                     &fig,
-                    hip: CGPoint(x: hipCenter.x + 2.9 * unit, y: hipCenter.y + 1.2 * unit),
-                    thighAngle: frontThighAngle,
-                    kneeBend: frontKneeBend,
+                    hip: CGPoint(x: hipCenter.x + 3.8 * unit, y: hipCenter.y + 1.0 * unit),
+                    thighAngle: frontThigh,
+                    kneeBend: frontKnee,
                     unit: unit,
-                    mainColor: style.skin,
-                    lightColor: style.skinLight,
-                    sandalColor: style.bikiniPrimary
+                    inkW: inkW,
+                    skin: style.skin
                 )
 
-                // 7) Boyun, baş, kirpikli/göz kırpan yüz ve katmanlı ön saç
-                let isBlinking = !reduceMotion && fmod(t + phaseOffset, 4.3) > 4.16
-                drawHeadAndFrontHair(&fig, shoulder: shoulderCenter, head: headCenter, unit: unit, wave: hairWave, blinking: isBlinking)
+                // 6) Büyük anime-chibi kafa + kulaklık + gözlük + gülümseme + ön saç
+                let isBlinking = !reduceMotion && fmod(t + phaseOffset, 4.1) > 3.96
+                drawChibiHeadAndHair(&fig, shoulder: shoulderCenter, head: headCenter, unit: unit, inkW: inkW, bounce: hairBounce, blinking: isBlinking)
 
-                // 8) Ön kol + karakter aksesuarı
-                drawTaperedArm(
+                // 7) Ön kol
+                drawChibiArm(
                     &fig,
-                    shoulder: CGPoint(x: shoulderCenter.x + 4.7 * unit, y: shoulderCenter.y + 1.5 * unit),
-                    upperAngle: frontShoulderAngle,
-                    elbowBend: frontElbowBend,
+                    shoulder: CGPoint(x: shoulderCenter.x + 8.6 * unit, y: shoulderCenter.y + 3.0 * unit),
+                    upperAngle: frontShoulder,
+                    elbowBend: frontElbow,
                     unit: unit,
-                    mainColor: style.skin,
-                    lightColor: style.skinLight,
-                    accessory: style.accessory
+                    inkW: inkW,
+                    skin: style.skin,
+                    sleeve: style.topPrimary
                 )
 
-                // 9) Duruma özel canlı atmosfer efektleri (holografik ekran parıltısı, düşünce/gelişim ışıltıları)
+                // 8) Durum mikro efektleri
                 if !reduceMotion {
                     if isWorkingPose {
-                        let glowPt = CGPoint(x: shoulderCenter.x + 11.5 * unit, y: shoulderCenter.y + 7.0 * unit)
-                        let glowR = 11.0 * unit
+                        let glowPt = CGPoint(x: shoulderCenter.x + 12.5 * unit, y: shoulderCenter.y + 7.5 * unit)
+                        let glowR = 10.5 * unit
                         fig.fill(
                             Path(ellipseIn: CGRect(x: glowPt.x - glowR, y: glowPt.y - glowR, width: glowR * 2, height: glowR * 2)),
-                            with: .radialGradient(
-                                Gradient(colors: [statusColor.opacity(0.38), .clear]),
-                                center: glowPt,
-                                startRadius: 1,
-                                endRadius: glowR
-                            )
+                            with: .radialGradient(Gradient(colors: [Color.cyan.opacity(0.40), .clear]), center: glowPt, startRadius: 1, endRadius: glowR)
                         )
-                        // Yükselen mini kod/enerji kıvılcımları
-                        for idx in 0..<3 {
-                            let p = fmod(t * 0.9 + phaseOffset + Double(idx) * 0.33, 1.0)
-                            let sx = glowPt.x + CGFloat(sin(p * 6.28 + Double(idx))) * 4.0 * unit
-                            let sy = glowPt.y - CGFloat(p) * 16.0 * unit
-                            let r = (1.6 - p * 0.9) * unit
-                            fig.fill(
-                                Path(ellipseIn: CGRect(x: sx - r, y: sy - r, width: r * 2, height: r * 2)),
-                                with: .color(statusColor.opacity((1.0 - p) * 0.85))
-                            )
-                        }
                     } else if isThinkingPose {
                         for idx in 0..<3 {
                             let p = t * 2.0 + phaseOffset + Double(idx) * 1.9
-                            let tx = headCenter.x + 10.5 * unit + CGFloat(cos(p)) * 3.0 * unit
-                            let ty = headCenter.y - 11.0 * unit - CGFloat(idx) * 3.8 * unit + CGFloat(sin(p)) * 1.4 * unit
-                            let r = (1.1 + Double(idx) * 0.55) * unit
-                            fig.fill(
-                                Path(ellipseIn: CGRect(x: tx - r, y: ty - r, width: r * 2, height: r * 2)),
-                                with: .color(Color.cyan.opacity(0.72))
-                            )
+                            let tx = headCenter.x + 17.5 * unit + CGFloat(cos(p)) * 2.8 * unit
+                            let ty = headCenter.y - 16.0 * unit - CGFloat(idx) * 4.0 * unit
+                            let r = (1.2 + Double(idx) * 0.55) * unit
+                            fig.fill(Path(ellipseIn: CGRect(x: tx - r, y: ty - r, width: r * 2, height: r * 2)), with: .color(Color.cyan.opacity(0.78)))
                         }
                     } else if isImprovingPose {
                         for idx in 0..<4 {
                             let p = fmod(t * 0.75 + phaseOffset + Double(idx) * 0.25, 1.0)
-                            let sx = cx + CGFloat(sin(Double(idx) * 1.7 + p * 4.0)) * 14.0 * unit
-                            let sy = groundY - CGFloat(p) * 78.0 * unit
-                            let r = 1.5 * unit
-                            fig.fill(
-                                Path(ellipseIn: CGRect(x: sx - r, y: sy - r, width: r * 2, height: r * 2)),
-                                with: .color(Color.mint.opacity((1.0 - p) * 0.85))
-                            )
+                            let sx = cx + CGFloat(sin(Double(idx) * 1.7 + p * 4.0)) * 16.0 * unit
+                            let sy = groundY - CGFloat(p) * 82.0 * unit
+                            let r = 1.6 * unit
+                            fig.fill(Path(ellipseIn: CGRect(x: sx - r, y: sy - r, width: r * 2, height: r * 2)), with: .color(Color.mint.opacity((1.0 - p) * 0.85)))
                         }
                     } else if isErrorPose {
                         let pulse = 0.55 + 0.45 * abs(sin(t * 7.0))
-                        let ex = headCenter.x + 11.0 * unit
-                        let ey = headCenter.y - 9.0 * unit
-                        fig.fill(
-                            Path(ellipseIn: CGRect(x: ex - 3.2 * unit, y: ey - 3.2 * unit, width: 6.4 * unit, height: 6.4 * unit)),
-                            with: .color(Color.red.opacity(pulse))
-                        )
+                        let ex = headCenter.x + 17.0 * unit
+                        let ey = headCenter.y - 14.0 * unit
+                        fig.fill(Path(ellipseIn: CGRect(x: ex - 3.6 * unit, y: ey - 3.6 * unit, width: 7.2 * unit, height: 7.2 * unit)), with: .color(Color.red.opacity(pulse)))
                     }
                 }
             }
         }
     }
 
-    /// İki nokta arasında uçtan uca incelen organik uzuv segmenti (çubuk/Lego hissini tamamen bitirir)
-    private func taperedLimbPath(from a: CGPoint, to b: CGPoint, rStart: CGFloat, rEnd: CGFloat, bulge: CGFloat = 0) -> Path {
+    private func limbCapsule(from a: CGPoint, to b: CGPoint, radius: CGFloat) -> Path {
         let dx = b.x - a.x
         let dy = b.y - a.y
         let len = max(0.001, hypot(dx, dy))
         let nx = -dy / len
         let ny = dx / len
-        let mx = (a.x + b.x) * 0.5
-        let my = (a.y + b.y) * 0.5
-        let rMid = (rStart + rEnd) * 0.5 + bulge
-
-        let aL = CGPoint(x: a.x + nx * rStart, y: a.y + ny * rStart)
-        let aR = CGPoint(x: a.x - nx * rStart, y: a.y - ny * rStart)
-        let bL = CGPoint(x: b.x + nx * rEnd, y: b.y + ny * rEnd)
-        let bR = CGPoint(x: b.x - nx * rEnd, y: b.y - ny * rEnd)
-        let cL = CGPoint(x: mx + nx * rMid, y: my + ny * rMid)
-        let cR = CGPoint(x: mx - nx * rMid, y: my - ny * rMid)
-
         var p = Path()
-        p.move(to: aL)
-        p.addQuadCurve(to: bL, control: cL)
-        p.addQuadCurve(to: bR, control: CGPoint(x: b.x + (dx / len) * rEnd * 0.9, y: b.y + (dy / len) * rEnd * 0.9))
-        p.addQuadCurve(to: aR, control: cR)
-        p.addQuadCurve(to: aL, control: CGPoint(x: a.x - (dx / len) * rStart * 0.9, y: a.y - (dy / len) * rStart * 0.9))
+        p.move(to: CGPoint(x: a.x + nx * radius, y: a.y + ny * radius))
+        p.addLine(to: CGPoint(x: b.x + nx * radius, y: b.y + ny * radius))
+        p.addQuadCurve(to: CGPoint(x: b.x - nx * radius, y: b.y - ny * radius), control: CGPoint(x: b.x + (dx / len) * radius * 1.2, y: b.y + (dy / len) * radius * 1.2))
+        p.addLine(to: CGPoint(x: a.x - nx * radius, y: a.y - ny * radius))
+        p.addQuadCurve(to: CGPoint(x: a.x + nx * radius, y: a.y + ny * radius), control: CGPoint(x: a.x - (dx / len) * radius * 1.2, y: a.y - (dy / len) * radius * 1.2))
         p.closeSubpath()
         return p
     }
 
-    private func drawBackHair(_ ctx: inout GraphicsContext, head: CGPoint, unit: CGFloat, wave: CGFloat) {
-        let len = 26.0 * unit * style.hairLength
-        var p = Path()
-        p.move(to: CGPoint(x: head.x - 8.6 * unit, y: head.y - 3.5 * unit))
-        p.addQuadCurve(
-            to: CGPoint(x: head.x - 12.6 * unit - wave * 0.95, y: head.y + len),
-            control: CGPoint(x: head.x - 15.2 * unit - wave * 0.40, y: head.y + len * 0.52)
-        )
-        p.addQuadCurve(
-            to: CGPoint(x: head.x - 2.0 * unit - wave * 0.70, y: head.y + len * 0.94),
-            control: CGPoint(x: head.x - 7.4 * unit - wave * 0.95, y: head.y + len * 1.12)
-        )
-        p.addQuadCurve(
-            to: CGPoint(x: head.x + 6.4 * unit - wave * 0.40, y: head.y + len * 0.78),
-            control: CGPoint(x: head.x + 2.5 * unit - wave * 0.55, y: head.y + len * 0.96)
-        )
-        p.addLine(to: CGPoint(x: head.x + 7.6 * unit, y: head.y - 2.2 * unit))
-        p.closeSubpath()
-        ctx.fill(
-            p,
-            with: .linearGradient(
-                Gradient(colors: [style.hair, style.hairDeep]),
-                startPoint: CGPoint(x: head.x, y: head.y - 6 * unit),
-                endPoint: CGPoint(x: head.x - 8 * unit, y: head.y + len)
+    private func drawChibiBackHair(_ ctx: inout GraphicsContext, head: CGPoint, unit: CGFloat, bounce: CGFloat) {
+        switch style.hairStyle {
+        case .longWavy, .twinTails, .bob, .ponytail:
+            let len: CGFloat = {
+                switch style.hairStyle {
+                case .longWavy: return 27.0 * unit
+                case .twinTails, .ponytail: return 24.0 * unit
+                default: return 15.5 * unit
+                }
+            }()
+            var p = Path()
+            p.move(to: CGPoint(x: head.x - 16.5 * unit, y: head.y - 2.0 * unit))
+            p.addQuadCurve(
+                to: CGPoint(x: head.x - 18.5 * unit - bounce, y: head.y + len),
+                control: CGPoint(x: head.x - 21.5 * unit, y: head.y + len * 0.55)
             )
-        )
+            p.addQuadCurve(
+                to: CGPoint(x: head.x + 15.0 * unit - bounce * 0.5, y: head.y + len * 0.85),
+                control: CGPoint(x: head.x, y: head.y + len * 1.15)
+            )
+            p.addLine(to: CGPoint(x: head.x + 16.0 * unit, y: head.y - 2.0 * unit))
+            p.closeSubpath()
+            ctx.fill(p, with: .color(style.hairDeep))
+            ctx.stroke(p, with: .color(inkColor), lineWidth: max(0.9, 1.15 * unit))
+        default:
+            break
+        }
     }
 
-    private func drawTaperedLeg(
+    private func drawChibiLeg(
         _ ctx: inout GraphicsContext,
         hip: CGPoint,
         thighAngle: Double,
         kneeBend: Double,
         unit: CGFloat,
-        mainColor: Color,
-        lightColor: Color,
-        sandalColor: Color
+        inkW: CGFloat,
+        skin: Color
     ) {
-        let thighLen = 19.6 * unit
-        let calfLen = 19.4 * unit
-
-        let knee = CGPoint(
-            x: hip.x + sin(thighAngle) * thighLen,
-            y: hip.y + cos(thighAngle) * thighLen
-        )
+        let thighLen = 9.5 * unit
+        let calfLen = 9.2 * unit
+        let knee = CGPoint(x: hip.x + sin(thighAngle) * thighLen, y: hip.y + cos(thighAngle) * thighLen)
         let calfAngle = thighAngle - kneeBend
-        let ankle = CGPoint(
-            x: knee.x + sin(calfAngle) * calfLen,
-            y: knee.y + cos(calfAngle) * calfLen
-        )
+        let ankle = CGPoint(x: knee.x + sin(calfAngle) * calfLen, y: knee.y + cos(calfAngle) * calfLen)
 
-        let limbGrad = GraphicsContext.Shading.linearGradient(
-            Gradient(colors: [lightColor, mainColor]),
-            startPoint: CGPoint(x: hip.x + 4 * unit, y: hip.y),
-            endPoint: CGPoint(x: hip.x - 4 * unit, y: ankle.y)
-        )
+        let legPath = limbCapsule(from: hip, to: ankle, radius: 2.55 * unit)
+        ctx.fill(legPath, with: .color(skin))
+        ctx.stroke(legPath, with: .color(inkColor), lineWidth: inkW * 0.9)
 
-        // Şekilli uyluk (kalçada dolgun, dize doğru zarif incelen)
-        let thigh = taperedLimbPath(from: hip, to: knee, rStart: 3.7 * unit, rEnd: 2.35 * unit, bulge: 0.45 * unit)
-        ctx.fill(thigh, with: limbGrad)
+        // Chunky Chibi Sneaker with white midsole
+        let shoeRect = CGRect(x: ankle.x - 3.6 * unit, y: ankle.y - 1.2 * unit, width: 10.0 * unit, height: 5.2 * unit)
+        let shoe = Path(roundedRect: shoeRect, cornerRadius: 2.3 * unit)
+        ctx.fill(shoe, with: .color(style.shoeColor))
+        ctx.stroke(shoe, with: .color(inkColor), lineWidth: inkW * 0.9)
 
-        // Diz yuvarlağı + ince baldır → ince ayak bileği
-        let calf = taperedLimbPath(from: knee, to: ankle, rStart: 2.35 * unit, rEnd: 1.45 * unit, bulge: 0.35 * unit)
-        ctx.fill(calf, with: limbGrad)
-
-        // Zarif topuklu/bantlı yazlık sandalet
-        let heel = CGPoint(x: ankle.x - 1.2 * unit, y: ankle.y + 2.4 * unit)
-        let toe = CGPoint(x: ankle.x + 5.0 * unit, y: ankle.y + 1.9 * unit)
-        var foot = Path()
-        foot.move(to: CGPoint(x: ankle.x - 1.3 * unit, y: ankle.y + 0.3 * unit))
-        foot.addQuadCurve(to: toe, control: CGPoint(x: ankle.x + 2.4 * unit, y: ankle.y + 0.4 * unit))
-        foot.addLine(to: CGPoint(x: toe.x - 0.5 * unit, y: toe.y + 1.1 * unit))
-        foot.addQuadCurve(to: heel, control: CGPoint(x: ankle.x + 1.6 * unit, y: ankle.y + 2.1 * unit))
-        foot.closeSubpath()
-        ctx.fill(foot, with: .color(mainColor))
-
-        var sole = Path()
-        sole.move(to: heel)
-        sole.addLine(to: CGPoint(x: heel.x + 0.6 * unit, y: heel.y + 0.9 * unit))
-        sole.move(to: CGPoint(x: ankle.x - 0.4 * unit, y: ankle.y + 1.8 * unit))
-        sole.addLine(to: CGPoint(x: toe.x + 0.2 * unit, y: toe.y + 0.9 * unit))
-        ctx.stroke(sole, with: .color(sandalColor), style: StrokeStyle(lineWidth: 1.45 * unit, lineCap: .round))
-
-        // İnce sandalet bilek/parmak bandı
-        var strap = Path()
-        strap.move(to: CGPoint(x: ankle.x - 1.1 * unit, y: ankle.y + 0.4 * unit))
-        strap.addLine(to: CGPoint(x: ankle.x + 1.6 * unit, y: ankle.y + 0.8 * unit))
-        strap.move(to: CGPoint(x: ankle.x + 2.4 * unit, y: ankle.y + 0.9 * unit))
-        strap.addLine(to: CGPoint(x: ankle.x + 3.8 * unit, y: ankle.y + 2.0 * unit))
-        ctx.stroke(strap, with: .color(style.bikiniTrim), style: StrokeStyle(lineWidth: 0.85 * unit, lineCap: .round))
+        let soleRect = CGRect(x: shoeRect.minX + 0.5 * unit, y: shoeRect.maxY - 1.7 * unit, width: shoeRect.width - 1.0 * unit, height: 1.5 * unit)
+        ctx.fill(Path(roundedRect: soleRect, cornerRadius: 0.7 * unit), with: .color(.white))
     }
 
-    private func drawTorsoAndBikini(
+    private func drawChibiTorsoAndShorts(
         _ ctx: inout GraphicsContext,
         hip: CGPoint,
-        waist: CGPoint,
         shoulder: CGPoint,
-        unit: CGFloat
+        unit: CGFloat,
+        inkW: CGFloat
     ) {
-        // Kum saati oranlı doğal gövde
-        var body = Path()
-        body.move(to: CGPoint(x: shoulder.x - 6.3 * unit, y: shoulder.y))
-        body.addQuadCurve(
-            to: CGPoint(x: waist.x - 4.3 * unit, y: waist.y),
-            control: CGPoint(x: shoulder.x - 6.0 * unit, y: (shoulder.y + waist.y) * 0.5)
+        // Şort
+        let shortsRect = CGRect(x: hip.x - 9.4 * unit, y: hip.y - 4.2 * unit, width: 18.8 * unit, height: 9.2 * unit)
+        let shortsPath = Path(roundedRect: shortsRect, cornerRadius: 2.6 * unit)
+        ctx.fill(shortsPath, with: .color(style.shortsColor))
+        ctx.stroke(shortsPath, with: .color(inkColor), lineWidth: inkW)
+
+        // Gövde Üstü (Hoodie / Aloha / Tişört)
+        var torso = Path()
+        torso.move(to: CGPoint(x: shoulder.x - 8.6 * unit, y: shoulder.y + 1.0 * unit))
+        torso.addQuadCurve(
+            to: CGPoint(x: shoulder.x + 8.8 * unit, y: shoulder.y + 1.0 * unit),
+            control: CGPoint(x: shoulder.x, y: shoulder.y - 2.0 * unit)
         )
-        body.addQuadCurve(
-            to: CGPoint(x: hip.x - 7.6 * unit, y: hip.y + 1.4 * unit),
-            control: CGPoint(x: hip.x - 8.0 * unit, y: waist.y + 5.2 * unit)
-        )
-        body.addQuadCurve(
-            to: CGPoint(x: hip.x + 7.6 * unit, y: hip.y + 1.4 * unit),
-            control: CGPoint(x: hip.x, y: hip.y + 7.2 * unit)
-        )
-        body.addQuadCurve(
-            to: CGPoint(x: waist.x + 4.6 * unit, y: waist.y),
-            control: CGPoint(x: hip.x + 8.0 * unit, y: waist.y + 5.2 * unit)
-        )
-        body.addQuadCurve(
-            to: CGPoint(x: shoulder.x + 6.6 * unit, y: shoulder.y),
-            control: CGPoint(x: shoulder.x + 7.2 * unit, y: (shoulder.y + waist.y) * 0.5)
-        )
-        body.closeSubpath()
+        torso.addLine(to: CGPoint(x: hip.x + 9.2 * unit, y: hip.y - 2.0 * unit))
+        torso.addLine(to: CGPoint(x: hip.x - 9.2 * unit, y: hip.y - 2.0 * unit))
+        torso.closeSubpath()
+
         ctx.fill(
-            body,
+            torso,
             with: .linearGradient(
-                Gradient(colors: [style.skinLight, style.skin, style.skinShade]),
-                startPoint: CGPoint(x: shoulder.x + 6 * unit, y: shoulder.y),
-                endPoint: CGPoint(x: hip.x - 7 * unit, y: hip.y + 4 * unit)
+                Gradient(colors: [style.topPrimary, style.topDeep]),
+                startPoint: shoulder,
+                endPoint: hip
             )
         )
+        ctx.stroke(torso, with: .color(inkColor), lineWidth: inkW)
 
-        // İnce göbek hattı vurgusu
-        ctx.fill(
-            Path(ellipseIn: CGRect(x: waist.x + 0.2 * unit, y: waist.y + 3.2 * unit, width: 1.0 * unit, height: 1.4 * unit)),
-            with: .color(style.skinShade.opacity(0.65))
-        )
-
-        let bikiniGrad = GraphicsContext.Shading.linearGradient(
-            Gradient(colors: [style.bikiniPrimary, style.bikiniDeep]),
-            startPoint: CGPoint(x: shoulder.x + 4 * unit, y: shoulder.y + 3 * unit),
-            endPoint: CGPoint(x: hip.x - 5 * unit, y: hip.y + 6 * unit)
-        )
-
-        // Bikini alt + yan bağcık detayı
-        var bottom = Path()
-        bottom.move(to: CGPoint(x: hip.x - 7.5 * unit, y: hip.y - 2.6 * unit))
-        bottom.addQuadCurve(
-            to: CGPoint(x: hip.x + 7.5 * unit, y: hip.y - 2.6 * unit),
-            control: CGPoint(x: hip.x, y: hip.y - 0.2 * unit)
-        )
-        bottom.addLine(to: CGPoint(x: hip.x + 1.3 * unit, y: hip.y + 5.8 * unit))
-        bottom.addLine(to: CGPoint(x: hip.x - 1.3 * unit, y: hip.y + 5.8 * unit))
-        bottom.closeSubpath()
-        ctx.fill(bottom, with: bikiniGrad)
-        ctx.stroke(bottom, with: .color(style.bikiniTrim.opacity(0.75)), lineWidth: 0.85 * unit)
-
-        // Yan kurdele bağcıkları
-        var ties = Path()
-        ties.move(to: CGPoint(x: hip.x + 7.4 * unit, y: hip.y - 2.4 * unit))
-        ties.addLine(to: CGPoint(x: hip.x + 9.2 * unit, y: hip.y + 0.5 * unit))
-        ties.move(to: CGPoint(x: hip.x - 7.4 * unit, y: hip.y - 2.4 * unit))
-        ties.addLine(to: CGPoint(x: hip.x - 8.9 * unit, y: hip.y + 0.4 * unit))
-        ctx.stroke(ties, with: .color(style.bikiniTrim), style: StrokeStyle(lineWidth: 0.9 * unit, lineCap: .round))
-
-        // Bikini üst + boyun askıları + hafif parlaklık
-        let chestY = shoulder.y + 7.6 * unit
-        var strap = Path()
-        strap.move(to: CGPoint(x: shoulder.x - 2.8 * unit, y: shoulder.y + 0.4 * unit))
-        strap.addLine(to: CGPoint(x: shoulder.x - 2.2 * unit, y: chestY))
-        strap.move(to: CGPoint(x: shoulder.x + 3.0 * unit, y: shoulder.y + 0.4 * unit))
-        strap.addLine(to: CGPoint(x: shoulder.x + 2.8 * unit, y: chestY))
-        ctx.stroke(strap, with: .color(style.bikiniTrim), lineWidth: 1.0 * unit)
-
-        var top = Path()
-        top.move(to: CGPoint(x: shoulder.x - 6.1 * unit, y: chestY + 2.4 * unit))
-        top.addQuadCurve(
-            to: CGPoint(x: shoulder.x + 0.2 * unit, y: chestY + 1.1 * unit),
-            control: CGPoint(x: shoulder.x - 3.0 * unit, y: chestY - 4.4 * unit)
-        )
-        top.addQuadCurve(
-            to: CGPoint(x: shoulder.x + 6.8 * unit, y: chestY + 2.4 * unit),
-            control: CGPoint(x: shoulder.x + 3.8 * unit, y: chestY - 4.4 * unit)
-        )
-        top.addQuadCurve(
-            to: CGPoint(x: shoulder.x - 6.1 * unit, y: chestY + 2.4 * unit),
-            control: CGPoint(x: shoulder.x + 0.3 * unit, y: chestY + 4.4 * unit)
-        )
-        top.closeSubpath()
-        ctx.fill(top, with: bikiniGrad)
-        ctx.stroke(top, with: .color(style.bikiniTrim.opacity(0.78)), lineWidth: 0.85 * unit)
+        // Kıyafet detayı (fermuar / tişört yakası / cep)
+        if style.outfit == .hoodie || style.outfit == .cardigan || style.outfit == .denim || style.outfit == .jacket {
+            let centerW = 3.8 * unit
+            let innerRect = CGRect(x: shoulder.x - centerW * 0.5, y: shoulder.y + 0.5 * unit, width: centerW, height: 18.0 * unit)
+            ctx.fill(Path(innerRect), with: .color(style.topAccent.opacity(0.88)))
+            ctx.stroke(Path(innerRect), with: .color(inkColor.opacity(0.65)), lineWidth: inkW * 0.65)
+        } else if style.outfit == .aloha || style.outfit == .floral {
+            // Küçük tropikal desen noktaları
+            for dx in stride(from: -4.5, through: 4.5, by: 4.5) {
+                for dy in stride(from: 6.0, through: 13.0, by: 6.5) {
+                    let pt = CGPoint(x: shoulder.x + dx * unit, y: shoulder.y + dy * unit)
+                    ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 1.4 * unit, y: pt.y - 1.4 * unit, width: 2.8 * unit, height: 2.8 * unit)), with: .color(style.topAccent.opacity(0.85)))
+                }
+            }
+        }
     }
 
-    private func drawHeadAndFrontHair(
+    private func drawChibiHeadAndHair(
         _ ctx: inout GraphicsContext,
         shoulder: CGPoint,
         head: CGPoint,
         unit: CGFloat,
-        wave: CGFloat,
+        inkW: CGFloat,
+        bounce: CGFloat,
         blinking: Bool
     ) {
-        // İnce boyun
-        let neck = taperedLimbPath(
-            from: CGPoint(x: shoulder.x, y: shoulder.y + 0.8 * unit),
-            to: CGPoint(x: head.x - 0.3 * unit, y: head.y + 6.8 * unit),
-            rStart: 2.1 * unit,
-            rEnd: 1.75 * unit
-        )
-        ctx.fill(neck, with: .color(style.skinShade))
-
-        // Yüz ovali
-        let headRect = CGRect(
-            x: head.x - 7.9 * unit,
-            y: head.y - 8.5 * unit,
-            width: 15.8 * unit,
-            height: 17.0 * unit
-        )
+        // Yüz ovali (geniş & yuvarlak sevimli chibi kafa)
+        let hw: CGFloat = 33.0 * unit
+        let hh: CGFloat = 30.5 * unit
+        let faceRect = CGRect(x: head.x - hw * 0.5, y: head.y - hh * 0.5, width: hw, height: hh)
+        let facePath = Path(ellipseIn: faceRect)
         ctx.fill(
-            Path(ellipseIn: headRect),
+            facePath,
             with: .radialGradient(
                 Gradient(colors: [style.skinLight, style.skin, style.skinShade]),
-                center: CGPoint(x: head.x + 2.2 * unit, y: head.y - 2.0 * unit),
-                startRadius: 1,
-                endRadius: 10.5 * unit
+                center: CGPoint(x: head.x + 4 * unit, y: head.y - 4 * unit),
+                startRadius: 2,
+                endRadius: hw * 0.65
             )
         )
+        ctx.stroke(facePath, with: .color(inkColor), lineWidth: inkW)
 
-        // Gözler, kirpikler veya güneş gözlüğü
-        let eyeY = head.y - 0.4 * unit
-        if style.accessory == .sunglasses {
-            let glassRect = CGRect(x: head.x - 1.2 * unit, y: eyeY - 2.0 * unit, width: 8.6 * unit, height: 3.6 * unit)
-            ctx.fill(Path(roundedRect: glassRect, cornerRadius: 1.6 * unit), with: .color(Color.black.opacity(0.86)))
-            ctx.stroke(Path(roundedRect: glassRect, cornerRadius: 1.6 * unit), with: .color(style.bikiniPrimary), lineWidth: 0.85 * unit)
-        } else if blinking {
+        // Gözler & beyaz ışıltı noktaları
+        let eyeY = head.y + 1.8 * unit
+        let leftEyeX = head.x - 3.5 * unit
+        let rightEyeX = head.x + 8.0 * unit
+        if blinking {
             var blink = Path()
-            blink.move(to: CGPoint(x: head.x + 1.0 * unit, y: eyeY))
-            blink.addQuadCurve(to: CGPoint(x: head.x + 3.2 * unit, y: eyeY), control: CGPoint(x: head.x + 2.1 * unit, y: eyeY + 0.7 * unit))
-            blink.move(to: CGPoint(x: head.x + 4.7 * unit, y: eyeY))
-            blink.addQuadCurve(to: CGPoint(x: head.x + 6.7 * unit, y: eyeY), control: CGPoint(x: head.x + 5.7 * unit, y: eyeY + 0.7 * unit))
-            ctx.stroke(blink, with: .color(Color(hex: "#2B1917")), style: StrokeStyle(lineWidth: 1.05 * unit, lineCap: .round))
+            blink.move(to: CGPoint(x: leftEyeX - 2.6 * unit, y: eyeY))
+            blink.addQuadCurve(to: CGPoint(x: leftEyeX + 2.6 * unit, y: eyeY), control: CGPoint(x: leftEyeX, y: eyeY + 1.6 * unit))
+            blink.move(to: CGPoint(x: rightEyeX - 2.6 * unit, y: eyeY))
+            blink.addQuadCurve(to: CGPoint(x: rightEyeX + 2.6 * unit, y: eyeY), control: CGPoint(x: rightEyeX, y: eyeY + 1.6 * unit))
+            ctx.stroke(blink, with: .color(inkColor), style: StrokeStyle(lineWidth: inkW * 1.1, lineCap: .round))
         } else {
-            ctx.fill(Path(ellipseIn: CGRect(x: head.x + 1.2 * unit, y: eyeY - 1.2 * unit, width: 2.1 * unit, height: 2.4 * unit)), with: .color(Color(hex: "#1E1615")))
-            ctx.fill(Path(ellipseIn: CGRect(x: head.x + 4.7 * unit, y: eyeY - 1.2 * unit, width: 1.9 * unit, height: 2.3 * unit)), with: .color(Color(hex: "#1E1615")))
-            ctx.fill(Path(ellipseIn: CGRect(x: head.x + 1.7 * unit, y: eyeY - 0.85 * unit, width: 0.75 * unit, height: 0.75 * unit)), with: .color(.white))
-            ctx.fill(Path(ellipseIn: CGRect(x: head.x + 5.1 * unit, y: eyeY - 0.85 * unit, width: 0.65 * unit, height: 0.65 * unit)), with: .color(.white))
-            // İnce kirpik vurgusu
-            var lash = Path()
-            lash.move(to: CGPoint(x: head.x + 0.8 * unit, y: eyeY - 1.1 * unit))
-            lash.addLine(to: CGPoint(x: head.x + 3.3 * unit, y: eyeY - 1.2 * unit))
-            lash.move(to: CGPoint(x: head.x + 4.5 * unit, y: eyeY - 1.1 * unit))
-            lash.addLine(to: CGPoint(x: head.x + 6.8 * unit, y: eyeY - 1.2 * unit))
-            ctx.stroke(lash, with: .color(Color(hex: "#1E1615")), style: StrokeStyle(lineWidth: 0.75 * unit, lineCap: .round))
+            for (ex, ew) in [(leftEyeX, 5.0 * unit), (rightEyeX, 4.6 * unit)] {
+                let eh = 6.0 * unit
+                let eRect = CGRect(x: ex - ew * 0.5, y: eyeY - eh * 0.5, width: ew, height: eh)
+                ctx.fill(Path(ellipseIn: eRect), with: .color(.white))
+                ctx.stroke(Path(ellipseIn: eRect), with: .color(inkColor), lineWidth: inkW * 0.7)
+                let irisRect = CGRect(x: ex - ew * 0.36, y: eyeY - eh * 0.38, width: ew * 0.78, height: eh * 0.80)
+                ctx.fill(Path(ellipseIn: irisRect), with: .color(style.eyeColor))
+                // Specular gloss highlights
+                ctx.fill(Path(ellipseIn: CGRect(x: ex - ew * 0.10, y: eyeY - eh * 0.30, width: 1.7 * unit, height: 1.7 * unit)), with: .color(.white))
+            }
         }
 
-        // Yanak allığı & gülümseme
-        ctx.fill(Path(ellipseIn: CGRect(x: head.x + 0.1 * unit, y: head.y + 1.5 * unit, width: 2.5 * unit, height: 1.3 * unit)), with: .color(Color(hex: "#FB7185").opacity(0.34)))
+        // Kaşlar
+        var brows = Path()
+        brows.move(to: CGPoint(x: leftEyeX - 2.6 * unit, y: eyeY - 4.4 * unit))
+        brows.addQuadCurve(to: CGPoint(x: leftEyeX + 2.6 * unit, y: eyeY - 4.5 * unit), control: CGPoint(x: leftEyeX, y: eyeY - 5.5 * unit))
+        brows.move(to: CGPoint(x: rightEyeX - 2.4 * unit, y: eyeY - 4.4 * unit))
+        brows.addQuadCurve(to: CGPoint(x: rightEyeX + 2.4 * unit, y: eyeY - 4.5 * unit), control: CGPoint(x: rightEyeX, y: eyeY - 5.5 * unit))
+        ctx.stroke(brows, with: .color(style.hairDeep), style: StrokeStyle(lineWidth: 1.2 * unit, lineCap: .round))
+
+        // Pembe yanak allığı & sevimli gülümseme
+        ctx.fill(Path(ellipseIn: CGRect(x: leftEyeX - 4.2 * unit, y: eyeY + 3.2 * unit, width: 4.0 * unit, height: 2.0 * unit)), with: .color(Color(hex: "#FB7185").opacity(0.36)))
+        ctx.fill(Path(ellipseIn: CGRect(x: rightEyeX + 0.4 * unit, y: eyeY + 3.2 * unit, width: 4.0 * unit, height: 2.0 * unit)), with: .color(Color(hex: "#FB7185").opacity(0.36)))
 
         var smile = Path()
-        smile.move(to: CGPoint(x: head.x + 1.8 * unit, y: head.y + 3.5 * unit))
-        smile.addQuadCurve(
-            to: CGPoint(x: head.x + 5.3 * unit, y: head.y + 3.3 * unit),
-            control: CGPoint(x: head.x + 3.6 * unit, y: head.y + 4.9 * unit)
-        )
-        ctx.stroke(smile, with: .color(style.lipTint), style: StrokeStyle(lineWidth: 1.15 * unit, lineCap: .round))
+        smile.move(to: CGPoint(x: head.x - 0.6 * unit, y: eyeY + 5.8 * unit))
+        smile.addQuadCurve(to: CGPoint(x: head.x + 5.6 * unit, y: eyeY + 5.6 * unit), control: CGPoint(x: head.x + 2.5 * unit, y: eyeY + 8.0 * unit))
+        ctx.stroke(smile, with: .color(Color(hex: "#8F3A36")), style: StrokeStyle(lineWidth: 1.15 * unit, lineCap: .round))
 
-        // Ön saç tacı + yüz çerçeveleyen hareketli tutam
+        // Opsiyonel gözlük / vizör
+        if style.accessory == .glassesHeadset || style.accessory == .visorHeadset {
+            let lGlass = CGRect(x: leftEyeX - 3.6 * unit, y: eyeY - 3.5 * unit, width: 7.2 * unit, height: 6.4 * unit)
+            let rGlass = CGRect(x: rightEyeX - 3.4 * unit, y: eyeY - 3.5 * unit, width: 7.0 * unit, height: 6.4 * unit)
+            let frameCol = style.accessory == .visorHeadset ? Color(hex: "#2563EB") : style.headsetColor
+            if style.accessory == .visorHeadset {
+                ctx.fill(Path(roundedRect: lGlass, cornerRadius: 1.5 * unit), with: .color(Color.cyan.opacity(0.22)))
+                ctx.fill(Path(roundedRect: rGlass, cornerRadius: 1.5 * unit), with: .color(Color.cyan.opacity(0.22)))
+            }
+            ctx.stroke(Path(roundedRect: lGlass, cornerRadius: 1.5 * unit), with: .color(frameCol), lineWidth: 1.2 * unit)
+            ctx.stroke(Path(roundedRect: rGlass, cornerRadius: 1.5 * unit), with: .color(frameCol), lineWidth: 1.2 * unit)
+            var bridge = Path()
+            bridge.move(to: CGPoint(x: lGlass.maxX, y: eyeY - 0.8 * unit))
+            bridge.addLine(to: CGPoint(x: rGlass.minX, y: eyeY - 0.8 * unit))
+            ctx.stroke(bridge, with: .color(frameCol), lineWidth: 1.2 * unit)
+        }
+
+        // Ön saç tacı & kaküller
         var crown = Path()
-        crown.move(to: CGPoint(x: head.x - 8.4 * unit, y: head.y - 1.4 * unit))
+        crown.move(to: CGPoint(x: head.x - 16.5 * unit, y: head.y - 1.5 * unit))
         crown.addQuadCurve(
-            to: CGPoint(x: head.x + 8.3 * unit, y: head.y - 4.0 * unit),
-            control: CGPoint(x: head.x + 0.6 * unit, y: head.y - 13.6 * unit)
+            to: CGPoint(x: head.x + 16.8 * unit, y: head.y - 3.0 * unit),
+            control: CGPoint(x: head.x, y: head.y - 24.5 * unit)
         )
+        // Kıvrımlı chibi kakül dişleri
+        crown.addQuadCurve(to: CGPoint(x: head.x + 9.5 * unit, y: head.y - 4.0 * unit), control: CGPoint(x: head.x + 14.0 * unit, y: head.y - 7.5 * unit))
+        crown.addQuadCurve(to: CGPoint(x: head.x + 3.0 * unit, y: head.y - 6.8 * unit), control: CGPoint(x: head.x + 6.5 * unit, y: head.y - 2.0 * unit))
+        crown.addQuadCurve(to: CGPoint(x: head.x - 5.5 * unit, y: head.y - 5.5 * unit), control: CGPoint(x: head.x - 1.2 * unit, y: head.y - 1.8 * unit))
         crown.addQuadCurve(
-            to: CGPoint(x: head.x - 1.6 * unit, y: head.y - 3.3 * unit),
-            control: CGPoint(x: head.x + 3.0 * unit, y: head.y - 5.4 * unit)
-        )
-        crown.addQuadCurve(
-            to: CGPoint(x: head.x - 8.4 * unit, y: head.y + 6.4 * unit + wave * 0.30),
-            control: CGPoint(x: head.x - 5.8 * unit, y: head.y + 1.4 * unit)
+            to: CGPoint(x: head.x - 16.5 * unit, y: head.y - 1.5 * unit),
+            control: CGPoint(x: head.x - 12.0 * unit, y: head.y - 0.5 * unit + bounce * 0.25)
         )
         crown.closeSubpath()
         ctx.fill(crown, with: .color(style.hair))
+        ctx.stroke(crown, with: .color(inkColor), lineWidth: inkW * 0.9)
 
+        // Parlak saç ışığı bandı
         var sheen = Path()
-        sheen.move(to: CGPoint(x: head.x - 4.0 * unit, y: head.y - 8.0 * unit))
-        sheen.addQuadCurve(
-            to: CGPoint(x: head.x + 3.1 * unit, y: head.y - 7.4 * unit),
-            control: CGPoint(x: head.x - 0.4 * unit, y: head.y - 10.0 * unit)
-        )
-        ctx.stroke(sheen, with: .color(style.hairHighlight.opacity(0.68)), style: StrokeStyle(lineWidth: 1.45 * unit, lineCap: .round))
+        sheen.move(to: CGPoint(x: head.x - 7.5 * unit, y: head.y - 11.5 * unit))
+        sheen.addQuadCurve(to: CGPoint(x: head.x + 7.5 * unit, y: head.y - 11.2 * unit), control: CGPoint(x: head.x, y: head.y - 14.2 * unit))
+        ctx.stroke(sheen, with: .color(style.hairHighlight.opacity(0.62)), style: StrokeStyle(lineWidth: 2.0 * unit, lineCap: .round))
 
-        if style.accessory == .headphones {
-            var band = Path()
-            band.move(to: CGPoint(x: head.x - 5.6 * unit, y: head.y - 2.4 * unit))
-            band.addQuadCurve(
-                to: CGPoint(x: head.x + 4.1 * unit, y: head.y - 6.3 * unit),
-                control: CGPoint(x: head.x - 1.1 * unit, y: head.y - 12.0 * unit)
+        // Kulaklık (Çift kulak yastığı + kafa bandı + mikrofon kolu)
+        let rightEarCup = CGRect(x: head.x + 12.6 * unit, y: head.y - 3.0 * unit, width: 5.4 * unit, height: 8.8 * unit)
+        ctx.fill(Path(roundedRect: rightEarCup, cornerRadius: 2.5 * unit), with: .color(style.headsetColor.opacity(0.92)))
+        ctx.stroke(Path(roundedRect: rightEarCup, cornerRadius: 2.5 * unit), with: .color(inkColor), lineWidth: inkW * 0.85)
+
+        var band = Path()
+        band.move(to: CGPoint(x: head.x - 16.0 * unit, y: head.y - 1.5 * unit))
+        band.addQuadCurve(
+            to: CGPoint(x: head.x + 15.2 * unit, y: head.y - 2.0 * unit),
+            control: CGPoint(x: head.x - 0.4 * unit, y: head.y - 25.5 * unit)
+        )
+        ctx.stroke(band, with: .color(inkColor), style: StrokeStyle(lineWidth: 4.0 * unit, lineCap: .round))
+        ctx.stroke(band, with: .color(style.headsetColor), style: StrokeStyle(lineWidth: 2.3 * unit, lineCap: .round))
+
+        let earCup = CGRect(x: head.x - 19.2 * unit, y: head.y - 3.5 * unit, width: 6.8 * unit, height: 10.0 * unit)
+        ctx.fill(Path(roundedRect: earCup, cornerRadius: 3.0 * unit), with: .color(style.headsetColor))
+        ctx.stroke(Path(roundedRect: earCup, cornerRadius: 3.0 * unit), with: .color(inkColor), lineWidth: inkW * 0.85)
+
+        if style.accessory != .headset {
+            var mic = Path()
+            mic.move(to: CGPoint(x: earCup.maxX - 1.0 * unit, y: earCup.maxY - 2.0 * unit))
+            mic.addQuadCurve(
+                to: CGPoint(x: head.x + 2.2 * unit, y: eyeY + 7.2 * unit),
+                control: CGPoint(x: head.x - 7.5 * unit, y: eyeY + 8.5 * unit)
             )
-            ctx.stroke(band, with: .color(style.bikiniPrimary), lineWidth: 1.65 * unit)
-            ctx.fill(Path(ellipseIn: CGRect(x: head.x - 6.8 * unit, y: head.y - 2.4 * unit, width: 3.7 * unit, height: 4.9 * unit)), with: .color(style.bikiniPrimary))
+            ctx.stroke(mic, with: .color(inkColor), style: StrokeStyle(lineWidth: 1.4 * unit, lineCap: .round))
+            ctx.fill(Path(ellipseIn: CGRect(x: head.x + 1.0 * unit, y: eyeY + 5.8 * unit, width: 3.2 * unit, height: 2.4 * unit)), with: .color(inkColor))
         }
     }
 
-    private func drawTaperedArm(
+    private func drawChibiArm(
         _ ctx: inout GraphicsContext,
         shoulder: CGPoint,
         upperAngle: Double,
         elbowBend: Double,
         unit: CGFloat,
-        mainColor: Color,
-        lightColor: Color,
-        accessory: BikiniCharacterStyle.AccessoryKind?
+        inkW: CGFloat,
+        skin: Color,
+        sleeve: Color
     ) {
-        let upperLen = 11.6 * unit
-        let lowerLen = 10.8 * unit
-
-        let elbow = CGPoint(
-            x: shoulder.x + sin(upperAngle) * upperLen,
-            y: shoulder.y + cos(upperAngle) * upperLen
-        )
+        let upperLen = 6.2 * unit
+        let lowerLen = 5.4 * unit
+        let elbow = CGPoint(x: shoulder.x + sin(upperAngle) * upperLen, y: shoulder.y + cos(upperAngle) * upperLen)
         let lowerAngle = upperAngle + elbowBend
-        let hand = CGPoint(
-            x: elbow.x + sin(lowerAngle) * lowerLen,
-            y: elbow.y + cos(lowerAngle) * lowerLen
-        )
+        let hand = CGPoint(x: elbow.x + sin(lowerAngle) * lowerLen, y: elbow.y + cos(lowerAngle) * lowerLen)
 
-        let armGrad = GraphicsContext.Shading.linearGradient(
-            Gradient(colors: [lightColor, mainColor]),
-            startPoint: shoulder,
-            endPoint: hand
-        )
+        let forearm = limbCapsule(from: elbow, to: hand, radius: 2.0 * unit)
+        ctx.fill(forearm, with: .color(skin))
+        ctx.stroke(forearm, with: .color(inkColor), lineWidth: inkW * 0.8)
 
-        ctx.fill(taperedLimbPath(from: shoulder, to: elbow, rStart: 1.9 * unit, rEnd: 1.45 * unit), with: armGrad)
-        ctx.fill(taperedLimbPath(from: elbow, to: hand, rStart: 1.45 * unit, rEnd: 1.05 * unit), with: armGrad)
-        // Zarif el
-        ctx.fill(Path(ellipseIn: CGRect(x: hand.x - 1.2 * unit, y: hand.y - 1.2 * unit, width: 2.4 * unit, height: 2.6 * unit)), with: .color(mainColor))
+        let sleeveArm = limbCapsule(from: shoulder, to: elbow, radius: 2.45 * unit)
+        ctx.fill(sleeveArm, with: .color(sleeve))
+        ctx.stroke(sleeveArm, with: .color(inkColor), lineWidth: inkW * 0.85)
 
-        switch accessory {
-        case .tablet, .notepad:
-            let rect = CGRect(x: hand.x - 0.9 * unit, y: hand.y - 4.2 * unit, width: 5.8 * unit, height: 7.4 * unit)
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 1.2 * unit), with: .color(Color(hex: "#1E293B")))
-            ctx.stroke(Path(roundedRect: rect, cornerRadius: 1.2 * unit), with: .color(style.bikiniTrim), lineWidth: 0.8 * unit)
-        case .coffee:
-            let cup = CGRect(x: hand.x - 1.5 * unit, y: hand.y - 3.6 * unit, width: 4.4 * unit, height: 5.2 * unit)
-            ctx.fill(Path(roundedRect: cup, cornerRadius: 1.0 * unit), with: .color(.white))
-            ctx.fill(Path(CGRect(x: cup.minX, y: cup.minY + 1.5 * unit, width: cup.width, height: 1.8 * unit)), with: .color(style.bikiniPrimary))
-        case .laptop:
-            let lap = CGRect(x: hand.x - 0.8 * unit, y: hand.y - 2.6 * unit, width: 7.2 * unit, height: 4.8 * unit)
-            ctx.fill(Path(roundedRect: lap, cornerRadius: 1.0 * unit), with: .color(Color(hex: "#CBD5E1")))
-        case .watch:
-            ctx.fill(Path(ellipseIn: CGRect(x: hand.x - 1.6 * unit, y: hand.y - 1.6 * unit, width: 2.8 * unit, height: 2.8 * unit)), with: .color(style.bikiniTrim))
-        default:
-            break
-        }
+        ctx.fill(Path(ellipseIn: CGRect(x: hand.x - 2.2 * unit, y: hand.y - 2.0 * unit, width: 4.4 * unit, height: 4.4 * unit)), with: .color(skin))
+        ctx.stroke(Path(ellipseIn: CGRect(x: hand.x - 2.2 * unit, y: hand.y - 2.0 * unit, width: 4.4 * unit, height: 4.4 * unit)), with: .color(inkColor), lineWidth: inkW * 0.75)
     }
 }
 
@@ -890,7 +797,7 @@ struct AgentAvatarView: View {
                 PulseRingView(color: statusColor, size: size)
             } else if isSelected {
                 Circle()
-                    .stroke(accent.opacity(0.70), lineWidth: 2.0)
+                    .stroke(accent.opacity(0.75), lineWidth: 2.0)
                     .frame(width: size + 6, height: size + 6)
                     .shadow(color: accent.opacity(0.45), radius: 5)
             }
@@ -899,7 +806,7 @@ struct AgentAvatarView: View {
                 Circle()
                     .fill(
                         RadialGradient(
-                            colors: [accent.opacity(0.32), Color(red: 0.08, green: 0.10, blue: 0.16).opacity(0.75)],
+                            colors: [accent.opacity(0.32), Color(red: 0.08, green: 0.11, blue: 0.18).opacity(0.85)],
                             center: .center,
                             startRadius: 1,
                             endRadius: size * 0.6
@@ -911,12 +818,12 @@ struct AgentAvatarView: View {
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fill)
-                            .scaleEffect(1.85, anchor: .top)
-                            .offset(y: size * 0.18)
+                            .scaleEffect(1.98, anchor: .top)
+                            .offset(y: size * 0.08)
                             .frame(width: size, height: size)
                             .clipShape(Circle())
                     )
-                    .overlay(Circle().strokeBorder(Color.white.opacity(isSelected ? 0.78 : 0.45), lineWidth: 1.5))
+                    .overlay(Circle().strokeBorder(Color.white.opacity(isSelected ? 0.80 : 0.45), lineWidth: 1.4))
                     .shadow(color: accent.opacity(0.35), radius: 5, y: 2)
             } else {
                 fallbackBadge
@@ -937,11 +844,11 @@ struct AgentAvatarView: View {
     }
 
     private var floorSpriteBody: some View {
-        let style = BikiniCharacterStyle.resolve(assetName: resolvedAsset, fallbackAccent: agent.accentHex)
+        let style = ChibiCharacterStyle.resolve(assetName: resolvedAsset, fallbackAccent: agent.accentHex)
         let phaseOffset = Double(abs(agent.id.uuidString.utf8.reduce(0) { ($0 &* 31) &+ Int($1) }) % 100) * 0.07
 
         return ZStack(alignment: .topTrailing) {
-            ArticulatedBikiniWalkerCanvas(
+            ArticulatedChibiWalkerCanvas(
                 style: style,
                 accent: accent,
                 status: agent.status,
@@ -953,18 +860,18 @@ struct AgentAvatarView: View {
                 phaseOffset: phaseOffset,
                 reduceMotion: reduceMotion
             )
-            .frame(width: max(54, size * 0.78), height: size + 10)
+            .frame(width: max(60, size * 0.84), height: size + 10)
 
             if showStatusDot {
                 Circle()
-                    .fill(isWalking ? accent : statusColor)
+                    .fill(isWalking ? Color.cyan : statusColor)
                     .frame(width: 9, height: 9)
                     .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
-                    .shadow(color: (isWalking ? accent : statusColor).opacity(0.8), radius: 3)
+                    .shadow(color: (isWalking ? Color.cyan : statusColor).opacity(0.85), radius: 3)
                     .offset(x: -8, y: 8)
             }
         }
-        .frame(width: max(54, size * 0.78), height: size + 10)
+        .frame(width: max(60, size * 0.84), height: size + 10)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("\(agent.name), \(isWalking ? "Yürüyor" : agent.status.rawValue)"))
     }
@@ -999,38 +906,33 @@ struct BikiniAvatarPickerStrip: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Ofis Çalışanı Karakteri (Canlı Yürüyen Bikinili Figür)")
+            Text("Ofis Çalışanı Karakteri (Chibi Stüdyo Ekibi)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(OfficeAvatarPreset.allPresets) { preset in
                         let isSel = selectedAsset == preset.assetName
-                        let style = BikiniCharacterStyle.resolve(assetName: preset.assetName, fallbackAccent: preset.accentHex)
                         Button {
                             selectedAsset = preset.assetName
                         } label: {
                             VStack(spacing: 4) {
-                                ArticulatedBikiniWalkerCanvas(
-                                    style: style,
-                                    accent: Color(hex: preset.accentHex),
-                                    status: .idle,
-                                    statusColor: .green,
-                                    isWalking: isSel,
-                                    strideIntensity: isSel ? 1.0 : 0.0,
-                                    isSelected: isSel,
-                                    facingLeft: false,
-                                    phaseOffset: Double(abs(preset.assetName.hashValue) % 30) * 0.1,
-                                    reduceMotion: false
-                                )
-                                .frame(width: 48, height: 64)
+                                if let nsImg = AvatarImageLoader.nsImage(named: preset.assetName) {
+                                    Image(nsImage: nsImg)
+                                        .resizable()
+                                        .interpolation(.high)
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: 48, height: 60)
+                                } else {
+                                    Circle().fill(Color(hex: preset.accentHex).opacity(0.35)).frame(width: 42, height: 42)
+                                }
                                 Text(preset.label.components(separatedBy: " · ").first ?? preset.label)
                                     .font(.system(size: 8.5, weight: isSel ? .bold : .medium))
                                     .lineLimit(1)
                             }
                             .padding(.horizontal, 6)
                             .padding(.vertical, 5)
-                            .frame(width: 72)
+                            .frame(width: 78)
                             .liquidGlassCard(
                                 cornerRadius: 11,
                                 tint: isSel ? Color(hex: accentHex) : nil,

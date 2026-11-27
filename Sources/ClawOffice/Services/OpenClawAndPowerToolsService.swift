@@ -381,31 +381,52 @@ enum OpenClawWorkspaceService {
                 return ""
             }
             let rawLinks = (root["links"] as? [[String: Any]]) ?? (root["edges"] as? [[String: Any]]) ?? []
-            for link in rawLinks.prefix(400) {
+            var allEdges: [GraphEdge] = []
+            allEdges.reserveCapacity(min(rawLinks.count, 400))
+            for link in rawLinks {
                 let src = extractID(link["source"])
                 let dst = extractID(link["target"])
                 let rel = (link["relation"] as? String) ?? (link["type"] as? String) ?? "calls"
                 if !src.isEmpty && !dst.isEmpty {
-                    edges.append(GraphEdge(source: src, target: dst, relation: rel))
                     degreeMap[src, default: 0] += 1
                     degreeMap[dst, default: 0] += 1
+                    if allEdges.count < 400 {
+                        allEdges.append(GraphEdge(source: src, target: dst, relation: rel))
+                    }
                 }
             }
+            edges = allEdges
+
             let rawNodes = (root["nodes"] as? [[String: Any]]) ?? []
-            for n in rawNodes.prefix(200) {
+            var allNodes: [GraphNode] = []
+            allNodes.reserveCapacity(rawNodes.count)
+            for n in rawNodes {
                 let id = extractID(n["id"])
                 guard !id.isEmpty else { continue }
                 let label = (n["label"] as? String) ?? (n["name"] as? String) ?? id
                 let comm = (n["community"] as? Int) ?? (n["cluster"] as? Int) ?? 0
                 let fpath = (n["file"] as? String) ?? (n["source_file"] as? String) ?? ""
-                nodes.append(GraphNode(id: id, label: label, community: comm, degree: degreeMap[id, default: 0], filePath: fpath))
+                allNodes.append(GraphNode(id: id, label: label, community: comm, degree: degreeMap[id, default: 0], filePath: fpath))
             }
+            let ranked = allNodes.sorted {
+                if $0.degree != $1.degree { return $0.degree > $1.degree }
+                return $0.label < $1.label
+            }
+            nodes = Array(ranked.prefix(200))
         }
         if reportText.isEmpty && nodes.isEmpty { return nil }
-        let gods = nodes.sorted { $0.degree > $1.degree }.prefix(8).map { $0 }
+        let gods = Array(nodes.prefix(8))
         let modDate = (try? FileManager.default.attributesOfItem(atPath: jsonURL.path)[.modificationDate] as? Date)
             ?? (try? FileManager.default.attributesOfItem(atPath: reportURL.path)[.modificationDate] as? Date)
         return GraphifySnapshot(reportMarkdown: reportText, nodes: nodes, edges: edges, godNodes: gods, lastUpdated: modDate)
+    }
+
+    static func runGraphifyUpdate(workspacePath: String, force: Bool = false) async -> LocalToolResult {
+        guard !PowerShellTools.which("graphify").isEmpty else {
+            return LocalToolResult(toolName: "graphify", commandUsed: "graphify update .", usedRTK: false, output: "graphify CLI kurulu değil.", succeeded: false, editRecord: nil)
+        }
+        let cmd = force ? "graphify update . --force" : "graphify update ."
+        return await PowerShellTools.runCommand(cmd, workspacePath: workspacePath, wrapWithRTK: false, timeoutSeconds: 180)
     }
 }
 
@@ -1049,7 +1070,7 @@ enum PowerShellTools {
         }.value
     }
 
-    private static func which(_ binary: String) -> String {
+    static func which(_ binary: String) -> String {
         let fm = FileManager.default
         if binary.hasPrefix("/") {
             return fm.isExecutableFile(atPath: binary) ? binary : ""
@@ -1117,7 +1138,7 @@ enum PowerShellTools {
         let effectiveTimeout = timeoutSeconds ?? (isLongRunning ? 180.0 : 45.0)
 
         let rtkBin = which("rtk")
-        let rtkCommands: Set<String> = ["git", "ls", "cat", "grep", "rg", "find", "cargo", "npm", "pnpm", "pytest", "swift", "docker", "gh"]
+        let rtkCommands: Set<String> = ["git", "ls", "cat", "grep", "rg", "find", "cargo", "npm", "pnpm", "pytest", "swift", "docker", "gh", "go", "ruff", "mypy", "tsc", "eslint", "vitest", "playwright", "diff", "wc", "tree", "xcodebuild"]
         let trimmedCmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
         let firstToken = trimmedCmd.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
         let isSimpleCommand = !trimmedCmd.isEmpty && !trimmedCmd.contains(where: { ";|&><$\n`".contains($0) })

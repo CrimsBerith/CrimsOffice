@@ -330,7 +330,7 @@ struct OpenClawControlCenterView: View {
                             if let img = AvatarImageLoader.nsImage(named: row.avatarAsset) {
                                 Image(nsImage: img)
                                     .resizable().aspectRatio(contentMode: .fill)
-                                    .scaleEffect(1.85, anchor: .top).offset(y: 6)
+                                    .scaleEffect(2.05, anchor: .top).offset(y: 4)
                                     .frame(width: 34, height: 34).clipShape(Circle())
                             }
                             VStack(alignment: .leading, spacing: 2) {

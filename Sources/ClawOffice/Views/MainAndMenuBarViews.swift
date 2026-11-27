@@ -55,52 +55,112 @@ struct MainContentView: View {
                     Section {
                         ForEach(engine.agents) { a in
                             let isSelected = engine.selectedAgentId == a.id
+                            let dotColor: Color = {
+                                switch a.status {
+                                case .idle: return .green
+                                case .chatting: return .teal
+                                case .thinking: return .cyan
+                                case .working: return .purple
+                                case .runningTool: return .orange
+                                case .collaborating: return .blue
+                                case .improving: return .mint
+                                case .error: return .red
+                                }
+                            }()
                             HStack(spacing: 8) {
-                                AgentAvatarView(agent: a, size: 26)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(a.name).font(.callout.weight(isSelected ? .bold : .medium))
-                                    Text(a.title).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer()
-                                if isSelected {
+                                ZStack {
                                     Circle()
-                                        .fill(Color(hex: a.accentHex))
-                                        .frame(width: 7, height: 7)
-                                        .shadow(color: Color(hex: a.accentHex).opacity(0.6), radius: 3)
+                                        .fill(Color(hex: a.accentHex).opacity(0.20))
+                                        .frame(width: 24, height: 24)
+                                    Image(systemName: a.symbolName.isEmpty ? "sparkles" : a.symbolName)
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(Color(hex: a.accentHex))
                                 }
+
+                                VStack(alignment: .leading, spacing: 1.5) {
+                                    HStack(spacing: 5) {
+                                        Text(a.name)
+                                            .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
+                                            .lineLimit(1)
+                                        Circle()
+                                            .fill(dotColor)
+                                            .frame(width: 6.5, height: 6.5)
+                                            .shadow(color: dotColor.opacity(0.7), radius: 2.5)
+                                    }
+                                    Text(a.title)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 4)
+
+                                AgentAvatarView(
+                                    agent: a,
+                                    size: 28,
+                                    showStatusDot: false,
+                                    isSelected: isSelected,
+                                    mode: .compactBadge
+                                )
                             }
-                            .padding(.vertical, 3)
-                            .padding(.horizontal, 4)
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 8)
                             .background(
-                                isSelected
-                                    ? Color(hex: a.accentHex).opacity(0.12)
-                                    : Color.clear,
-                                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(
+                                        isSelected
+                                            ? Color(hex: a.accentHex).opacity(0.18)
+                                            : Color.white.opacity(0.05)
+                                    )
                             )
-                            .contentShape(Rectangle())
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(
+                                        isSelected
+                                            ? Color(hex: a.accentHex).opacity(0.55)
+                                            : Color.white.opacity(0.10),
+                                        lineWidth: isSelected ? 1.1 : 0.7
+                                    )
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                             .onTapGesture { engine.selectedAgentId = a.id; section = .office }
                         }
-                        HStack {
+
+                        VStack(spacing: 6) {
                             Button { showAddAgent = true } label: {
-                                Label("Yeni Ajan Ekle", systemImage: "plus.circle.fill")
+                                HStack {
+                                    Spacer()
+                                    Text("Yeni Ajan Ekle")
+                                        .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 11, weight: .bold))
+                                    Spacer()
+                                }
+                                .padding(.vertical, 7)
+                                .liquidGlassCard(cornerRadius: 10, tint: .cyan, interactive: true)
                             }
                             .buttonStyle(.plain)
-                            .foregroundStyle(Color.accentColor)
-
-                            Spacer()
 
                             if engine.agents.count > 1 {
                                 Button {
                                     showResetOfficeConfirm = true
                                 } label: {
-                                    Image(systemName: "arrow.counterclockwise").font(.caption)
+                                    HStack {
+                                        Spacer()
+                                        Text("Ofisi Sıfırla")
+                                            .font(.system(size: 11.5, weight: .semibold, design: .rounded))
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 10.5, weight: .bold))
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 7)
+                                    .liquidGlassCard(cornerRadius: 10, tint: nil, interactive: true)
                                 }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(.secondary)
                                 .help("Ofisi 1 kişilik başlangıç kadrosuna sıfırla (Atlas)")
                             }
                         }
-                        .padding(.top, 4)
+                        .padding(.top, 6)
                     } header: {
                         Text("Ajan Ekibi (\(engine.agents.count))")
                             .padding(.leading, 8)

@@ -53,7 +53,7 @@ struct OfficeFloorView: View {
                 Divider()
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
-                        backgroundLayer
+                        backgroundLayer(size: geo.size)
                             .contentShape(Rectangle())
                             .onTapGesture { location in
                                 walkSelectedAgent(toScreenPoint: location, in: geo.size)
@@ -71,23 +71,29 @@ struct OfficeFloorView: View {
                         flyingPacketsLayer(size: geo.size)
                         agentsLayer(size: geo.size)
 
-                        // Sağ üstte yüzen cam Aktif Görev Planı kartı
+                        // Sağ üstte yüzen cam Aktif Görev Planı kartı (tam geo.size içine sabitlenmiş)
                         if !engine.planTasks.isEmpty {
                             VStack {
                                 HStack {
                                     Spacer()
                                     planBoardOverlay
                                         .padding(2)
-                                        .frame(width: min(268, max(210, geo.size.width * 0.30)))
+                                        .frame(width: min(258, max(200, geo.size.width * 0.34)))
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                .fill(Color(red: 0.07, green: 0.10, blue: 0.16).opacity(colorScheme == .dark ? 0.78 : 0.45))
+                                        )
                                         .liquidGlassCard(cornerRadius: 16, tint: .blue, interactive: true)
-                                        .shadow(color: Color.black.opacity(0.28), radius: 12, y: 4)
+                                        .shadow(color: Color.black.opacity(0.35), radius: 14, y: 5)
                                 }
                                 Spacer()
                             }
                             .padding(12)
+                            .frame(width: geo.size.width, height: geo.size.height)
                             .zIndex(20_000)
                         }
                     }
+                    .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
                 }
                 if showDialogueFeed {
@@ -183,31 +189,32 @@ struct OfficeFloorView: View {
     }
 
     private var topHUD: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 6) {
-                CrimsBrandLogoView(size: 16)
-                Circle()
-                    .fill(engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48"))
-                    .frame(width: 7, height: 7)
-                    .shadow(color: (engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48")).opacity(0.7), radius: 4)
-                Text(engine.isRunningPipeline ? engine.pipelineStatusText : (engine.activeBusyCount > 0 ? "\(engine.activeBusyCount) Ajan Aktif" : "Crims Studio"))
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .liquidGlassCapsule(tint: engine.activeBusyCount > 0 ? .green : Color(hex: "#E11D48"), interactive: false)
-
+        VStack(alignment: .leading, spacing: 6) {
+            // Satır 1: Stüdyo durumu + Workspace + Kod Yazma / Build Gate / Düzenlemeler / Git + Sağlayıcılar
             ScrollView(.horizontal, showsIndicators: false) {
-                LiquidGlassContainer(spacing: 7) {
-                    HStack(spacing: 7) {
+                LiquidGlassContainer(spacing: 6) {
+                    HStack(spacing: 6) {
+                        HStack(spacing: 6) {
+                            CrimsBrandLogoView(size: 15)
+                            Circle()
+                                .fill(engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48"))
+                                .frame(width: 7, height: 7)
+                                .shadow(color: (engine.activeBusyCount > 0 ? Color.green : Color(hex: "#E11D48")).opacity(0.7), radius: 4)
+                            Text(engine.isRunningPipeline ? engine.pipelineStatusText : (engine.activeBusyCount > 0 ? "\(engine.activeBusyCount) Ajan Aktif" : "Crims Studio"))
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 4.5)
+                        .liquidGlassCapsule(tint: engine.activeBusyCount > 0 ? .green : Color(hex: "#E11D48"), interactive: false)
+
                         Button {
                             showWorkspacePopover.toggle()
                         } label: {
                             HStack(spacing: 4) {
                                 Image(systemName: "folder.fill")
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(.blue)
-                                Text(URL(fileURLWithPath: engine.workspacePath).lastPathComponent)
+                                    .foregroundStyle(.cyan)
+                                Text("/\(URL(fileURLWithPath: engine.workspacePath).lastPathComponent)")
                                     .font(.system(size: 10, weight: .semibold))
                                     .lineLimit(1)
                             }
@@ -224,7 +231,7 @@ struct OfficeFloorView: View {
                             engine.allowFileWrites.toggle()
                             engine.saveConfig()
                         } label: {
-                            statusPill("Kod Yazma", active: engine.allowFileWrites, color: .purple)
+                            statusPill("Kod Yazma", active: engine.allowFileWrites, color: .green)
                         }
                         .buttonStyle(.plain)
                         .help("Ajanların dosya yazma/yamalama yetkisini aç/kapat")
@@ -245,14 +252,12 @@ struct OfficeFloorView: View {
                                 showEditsPopover.toggle()
                             } label: {
                                 HStack(spacing: 4) {
-                                    Image(systemName: "doc.badge.clock.fill")
-                                        .font(.system(size: 9.5))
-                                        .foregroundStyle(.mint)
+                                    Circle().fill(Color.orange).frame(width: 6, height: 6)
                                     Text("\(activeEditCount) Düzenleme")
                                         .font(.system(size: 10, weight: .semibold))
                                 }
                                 .padding(.horizontal, 8).padding(.vertical, 4.5)
-                                .liquidGlassCapsule(tint: .mint, interactive: true)
+                                .liquidGlassCapsule(tint: .orange, interactive: true)
                             }
                             .buttonStyle(.plain)
                             .help("Ajanların yaptığı kod düzenlemelerini, diff ve geri alma (rollback) seçeneklerini incele")
@@ -265,6 +270,37 @@ struct OfficeFloorView: View {
                             statusPill("\(git.branch)\(git.dirtyCount > 0 ? " (\(git.dirtyCount))" : "")", active: true, color: git.dirtyCount > 0 ? .yellow : .mint)
                         }
 
+                        ForEach(engine.providers) { p in
+                            let health = engine.providerStatuses[p.id]
+                            let tintCol: Color = health != nil ? (health!.isOnline ? .green : .red) : (p.isConfigured ? .blue : .gray)
+                            Button {
+                                engine.checkProvidersHealth()
+                            } label: {
+                                HStack(spacing: 5) {
+                                    Circle()
+                                        .fill(tintCol)
+                                        .frame(width: 6.5, height: 6.5)
+                                    Text(p.name).font(.system(size: 10, weight: .medium))
+                                    if let h = health, h.isOnline && h.latencyMs > 0 {
+                                        Text("\(h.latencyMs)ms")
+                                            .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                .padding(.horizontal, 8).padding(.vertical, 4.5)
+                                .liquidGlassCapsule(tint: tintCol, interactive: true)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Sağlık kontrolü: \(health?.statusMessage ?? "Tıkla ve test et")")
+                        }
+                    }
+                }
+            }
+
+            // Satır 2: OpenClaw WS + Ekip Sohbeti + Sahil Stüdyo + Yürüt + Masalara + Sistem Durumu
+            ScrollView(.horizontal, showsIndicators: false) {
+                LiquidGlassContainer(spacing: 6) {
+                    HStack(spacing: 6) {
                         Button {
                             engine.requestedSectionRawValue = AppSection.openClawHub.rawValue
                         } label: {
@@ -275,7 +311,7 @@ struct OfficeFloorView: View {
                                 Text(engine.openClawGatewaySnap.gatewayOnline ? "OpenClaw WS" : "OpenClaw Hub")
                                     .font(.system(size: 10, weight: .semibold))
                             }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5)
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
                             .liquidGlassCapsule(tint: engine.openClawGatewaySnap.gatewayOnline ? .teal : .indigo, interactive: true)
                         }
                         .buttonStyle(.plain)
@@ -289,7 +325,7 @@ struct OfficeFloorView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "bubble.left.and.bubble.right.fill")
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(showDialogueFeed ? .teal : .secondary)
+                                    .foregroundStyle(showDialogueFeed ? .cyan : .secondary)
                                 Text("Ekip Sohbeti (\(engine.officeDialogues.count))")
                                     .font(.system(size: 10, weight: .semibold))
                             }
@@ -308,15 +344,15 @@ struct OfficeFloorView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: engine.useIllustratedFloorBackdrop ? "sun.max.fill" : "square.grid.2x2")
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(engine.useIllustratedFloorBackdrop ? .orange : .secondary)
+                                    .foregroundStyle(engine.useIllustratedFloorBackdrop ? .cyan : .secondary)
                                 Text(engine.useIllustratedFloorBackdrop ? "Sahil Stüdyo" : "Minimal Cam")
                                     .font(.system(size: 10, weight: .semibold))
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4.5)
-                            .liquidGlassCapsule(tint: engine.useIllustratedFloorBackdrop ? .orange : nil, interactive: true)
+                            .liquidGlassCapsule(tint: engine.useIllustratedFloorBackdrop ? .cyan : nil, interactive: true)
                         }
                         .buttonStyle(.plain)
-                        .help("İllüstrasyonlu Crims Beach Stüdyo zeminini aç/kapat")
+                        .help("İzometrik Sahil Stüdyosu zeminini aç/kapat")
 
                         Button {
                             engine.tickAmbientOffice(forceStroll: true)
@@ -324,12 +360,12 @@ struct OfficeFloorView: View {
                             HStack(spacing: 4) {
                                 Image(systemName: "figure.walk")
                                     .font(.system(size: 9.5))
-                                    .foregroundStyle(.pink)
+                                    .foregroundStyle(.cyan)
                                 Text("Yürüt")
                                     .font(.system(size: 10, weight: .semibold))
                             }
                             .padding(.horizontal, 8).padding(.vertical, 4.5)
-                            .liquidGlassCapsule(tint: .pink, interactive: true)
+                            .liquidGlassCapsule(tint: .blue, interactive: true)
                         }
                         .buttonStyle(.plain)
                         .help("Stüdyoda canlı yürüyüş başlat (Zeminde herhangi bir noktaya da tıklayabilirsiniz)")
@@ -350,49 +386,25 @@ struct OfficeFloorView: View {
                         .buttonStyle(.plain)
                         .help("Tüm ekibi kendi çalışma masasına geri yürüt")
 
-                        ForEach(engine.providers) { p in
-                            let health = engine.providerStatuses[p.id]
-                            let tintCol: Color = health != nil ? (health!.isOnline ? .green : .red) : (p.isConfigured ? .blue : .gray)
-                            Button {
-                                engine.checkProvidersHealth()
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Circle()
-                                        .fill(tintCol)
-                                        .frame(width: 7, height: 7)
-                                    Text(p.name).font(.caption.weight(.medium))
-                                    if let h = health, h.isOnline && h.latencyMs > 0 {
-                                        Text("\(h.latencyMs)ms")
-                                            .font(.system(size: 9, weight: .bold, design: .monospaced))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(.horizontal, 9).padding(.vertical, 4.5)
-                                .liquidGlassCapsule(tint: tintCol, interactive: true)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Sağlık kontrolü: \(health?.statusMessage ?? "Tıkla ve test et")")
-                        }
-
                         HStack(spacing: 4) {
                             Image(systemName: "shield.lefthalf.filled.badge.checkmark")
                                 .foregroundStyle(.blue)
-                                .font(.system(size: 10))
+                                .font(.system(size: 9.5))
                             Text(engine.lastFailoverNotice.isEmpty ? "Devralma: Aktif\(engine.failoverEventCount > 0 ? " (\(engine.failoverEventCount))" : "")" : "🔄 \(engine.lastFailoverNotice)")
                                 .font(.system(size: 10, weight: .semibold))
                                 .lineLimit(1)
                         }
-                        .padding(.horizontal, 9).padding(.vertical, 4.5)
+                        .padding(.horizontal, 8).padding(.vertical, 4.5)
                         .liquidGlassCapsule(tint: engine.lastFailoverNotice.isEmpty ? .blue : .orange, interactive: false)
                         .help("Model dolu, kotada veya zaman aşımında sıradaki model/sağlayıcı görevi otomatik devralır.")
 
                         if engine.cavemanMode != .off {
                             HStack(spacing: 4) {
-                                Image(systemName: "bolt.shield.fill").foregroundStyle(.yellow).font(.system(size: 10))
+                                Image(systemName: "bolt.shield.fill").foregroundStyle(.yellow).font(.system(size: 9.5))
                                 Text("Caveman \(engine.cavemanMode.rawValue)")
                                     .font(.system(size: 10, weight: .semibold))
                             }
-                            .padding(.horizontal, 9).padding(.vertical, 4.5)
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
                             .liquidGlassCapsule(tint: .yellow, interactive: false)
                         }
 
@@ -405,9 +417,8 @@ struct OfficeFloorView: View {
                     }
                 }
             }
-            Spacer()
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
+        .padding(.horizontal, 12).padding(.vertical, 8)
         .liquidGlassBar()
     }
 
@@ -586,31 +597,39 @@ struct OfficeFloorView: View {
         .liquidGlassCapsule(tint: active ? color : nil, interactive: false)
     }
 
-    private var backgroundLayer: some View {
+    private func backgroundLayer(size: CGSize) -> some View {
         ZStack {
-            AmbientGlassBackdrop(accent: Color(hex: engine.selectedAgent?.accentHex ?? "#E11D48"))
+            AmbientGlassBackdrop(accent: Color(hex: engine.selectedAgent?.accentHex ?? "#06B6D4"))
             if engine.useIllustratedFloorBackdrop,
                let bgImg = AvatarImageLoader.nsImage(named: "office_studio_floor") {
                 Image(nsImage: bgImg)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
-                    .opacity(colorScheme == .dark ? 0.36 : 0.62)
+                    .frame(width: size.width, height: size.height)
+                    .clipped()
+                    .opacity(colorScheme == .dark ? 0.94 : 0.98)
                     .overlay(
-                        (colorScheme == .dark ? Color.black.opacity(0.32) : Color.white.opacity(0.18))
+                        LinearGradient(
+                            colors: [Color.clear, Color.black.opacity(colorScheme == .dark ? 0.16 : 0.04)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
                     )
                     .allowsHitTesting(false)
+            } else {
+                Canvas { ctx, canvasSize in
+                    var p = Path()
+                    var x: CGFloat = 0
+                    while x <= canvasSize.width { p.move(to: .init(x: x, y: 0)); p.addLine(to: .init(x: x, y: canvasSize.height)); x += 36 }
+                    var y: CGFloat = 0
+                    while y <= canvasSize.height { p.move(to: .init(x: 0, y: y)); p.addLine(to: .init(x: canvasSize.width, y: y)); y += 36 }
+                    ctx.stroke(p, with: .color(colorScheme == .dark ? .white.opacity(0.04) : .black.opacity(0.05)), lineWidth: 1)
+                }
+                .drawingGroup()
             }
-            Canvas { ctx, size in
-                var p = Path()
-                var x: CGFloat = 0
-                while x <= size.width { p.move(to: .init(x: x, y: 0)); p.addLine(to: .init(x: x, y: size.height)); x += 36 }
-                var y: CGFloat = 0
-                while y <= size.height { p.move(to: .init(x: 0, y: y)); p.addLine(to: .init(x: size.width, y: y)); y += 36 }
-                ctx.stroke(p, with: .color(colorScheme == .dark ? .white.opacity(0.035) : .black.opacity(0.04)), lineWidth: 1)
-            }
-            .drawingGroup()
         }
+        .frame(width: size.width, height: size.height)
     }
 
     private func zonesLayer(size: CGSize) -> some View {
@@ -623,39 +642,52 @@ struct OfficeFloorView: View {
 
     private func meetingRoomZone(size: CGSize) -> some View {
         let isMeetingActive = engine.isRunningPipeline || engine.agents.contains(where: { $0.currentZone == .meetingRoom })
-        let w = min(232, size.width * 0.31)
-        let h = min(108, size.height * 0.19)
+        let w = min(190, size.width * 0.25)
+        let h = min(84, size.height * 0.15)
 
         return ZStack {
-            Capsule()
-                .fill(colorScheme == .dark ? Color.white.opacity(0.07) : Color.white.opacity(0.35))
-                .frame(width: min(136, size.width * 0.18), height: min(46, size.height * 0.09))
-                .overlay(Capsule().stroke(Color.primary.opacity(0.10), lineWidth: 1))
+            Ellipse()
+                .fill(
+                    RadialGradient(
+                        colors: [
+                            (isMeetingActive ? Color.cyan : Color.blue).opacity(isMeetingActive ? 0.16 : 0.08),
+                            Color.clear
+                        ],
+                        center: .center,
+                        startRadius: 6,
+                        endRadius: w * 0.52
+                    )
+                )
+            Ellipse()
+                .stroke(
+                    (isMeetingActive ? Color.cyan : Color.white).opacity(isMeetingActive ? 0.45 : 0.18),
+                    style: StrokeStyle(lineWidth: 1.2, dash: [5, 5])
+                )
 
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Image(systemName: "person.3.sequence.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isMeetingActive ? Color.accentColor : .secondary)
-                Text("TOPLANTI & TARTIŞMA ODASI")
-                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
-                    .foregroundStyle(isMeetingActive ? Color.accentColor : .secondary)
-                    .tracking(0.5)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(isMeetingActive ? Color.cyan : .white.opacity(0.65))
+                Text("TOPLANTI ALANI")
+                    .font(.system(size: 8, weight: .bold, design: .rounded))
+                    .foregroundStyle(isMeetingActive ? Color.cyan : .white.opacity(0.68))
+                    .tracking(0.6)
 
                 if engine.isRunningPipeline {
                     Text("CANLI OTURUM")
-                        .font(.system(size: 8, weight: .heavy))
+                        .font(.system(size: 7.5, weight: .heavy))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 8).padding(.vertical, 2.5)
-                        .background(Color.accentColor, in: Capsule())
-                        .shadow(color: Color.accentColor.opacity(0.6), radius: 5)
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(Color.cyan, in: Capsule())
+                        .shadow(color: Color.cyan.opacity(0.6), radius: 5)
                 }
             }
         }
         .frame(width: w, height: h)
-        .liquidGlassCard(cornerRadius: 24, tint: isMeetingActive ? .accentColor : nil, interactive: true)
-        .position(x: size.width * 0.50, y: size.height * 0.50)
+        .contentShape(Ellipse())
+        .position(x: size.width * 0.50, y: size.height * 0.52)
         .onTapGesture {
-            walkSelectedAgent(toNormalized: Point2D(x: 0.50, y: 0.50), in: size, zoneOverride: .meetingRoom, bubbleOverride: "📝 Toplantı odasına geçiyor")
+            walkSelectedAgent(toNormalized: Point2D(x: 0.50, y: 0.52), in: size, zoneOverride: .meetingRoom, bubbleOverride: "📝 Toplantı alanına geçiyor")
         }
     }
 
@@ -768,53 +800,26 @@ struct OfficeFloorView: View {
             let isAtOwnDesk = agent.currentZone == .desk
 
             ZStack {
-                // Translucent Workstation Desk Pad
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? accent.opacity(0.12) : (colorScheme == .dark ? Color.white.opacity(0.035) : Color.white.opacity(0.42)))
-                    .frame(width: 118, height: 48)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(working ? accent.opacity(0.50) : Color.white.opacity(isSelected ? 0.24 : 0.10), lineWidth: 1)
-                    )
+                IsometricGlassDeskView(
+                    accent: accent,
+                    working: working,
+                    isSelected: isSelected,
+                    isDark: colorScheme == .dark
+                )
 
-                // Compact Glowing Studio Display docked neatly on right side of desk pad
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(Color(red: 0.06, green: 0.08, blue: 0.13))
-                    .frame(width: 34, height: 22)
-                    .overlay(
-                        VStack(alignment: .leading, spacing: 2.5) {
-                            HStack(spacing: 2) {
-                                Circle().fill(working ? accent : Color.green.opacity(0.75)).frame(width: 3, height: 3)
-                                Spacer()
-                            }
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(accent.opacity(working ? 0.95 : 0.50))
-                                .frame(width: working ? 22 : 14, height: 2.5)
-                            RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.white.opacity(working ? 0.65 : 0.25))
-                                .frame(width: 16, height: 2)
-                        }
-                        .padding(3.5)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .stroke(working ? accent.opacity(0.75) : Color.white.opacity(0.16), lineWidth: 1)
-                    )
-                    .shadow(color: working ? accent.opacity(0.45) : .clear, radius: 4)
-                    .offset(x: 42, y: -12)
-
-                // Empty-desk nameplate shown ONLY when the agent walks to Meeting Room / Server Rack
+                // Empty-desk nameplate shown ONLY when the agent walks away
                 if !isAtOwnDesk {
                     Text("\(agent.emoji) \(agent.name) Masası")
                         .font(.system(size: 8.5, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.92))
                         .lineLimit(1)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .offset(x: -10, y: 4)
+                        .padding(.horizontal, 7).padding(.vertical, 2.5)
+                        .background(Color(red: 0.08, green: 0.12, blue: 0.18).opacity(0.76), in: Capsule())
+                        .overlay(Capsule().stroke(Color.cyan.opacity(0.35), lineWidth: 0.7))
+                        .offset(x: -10, y: 14)
                 }
             }
-            .position(x: pt.x, y: pt.y - 4)
+            .position(x: pt.x, y: pt.y + 4)
             .onTapGesture {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                     engine.selectedAgentId = agent.id
@@ -982,11 +987,16 @@ struct OfficeFloorView: View {
                         if !cleanBubble.isEmpty {
                             let activeTalk = agent.status.isBusy || agent.status == .chatting || isWalking
                             Text(cleanBubble)
-                                .font(.system(size: 9.5, weight: .medium))
+                                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.95) : Color.primary)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.center)
                                 .frame(maxWidth: 176)
                                 .padding(.horizontal, 8).padding(.vertical, 4)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Color(red: 0.08, green: 0.11, blue: 0.17).opacity(colorScheme == .dark ? 0.72 : 0.14))
+                                )
                                 .liquidGlassCard(
                                     cornerRadius: 10,
                                     tint: activeTalk ? Color(hex: agent.accentHex) : nil,
@@ -1009,12 +1019,13 @@ struct OfficeFloorView: View {
                             HStack(spacing: 3) {
                                 Text("\(agent.emoji) \(agent.name)")
                                     .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .foregroundStyle(colorScheme == .dark ? .white : .primary)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Text(agent.title)
                                     .font(.system(size: 7.5, weight: .medium))
                                     .padding(.horizontal, 4).padding(.vertical, 1)
-                                    .background(Color(hex: agent.accentHex).opacity(0.22), in: Capsule())
+                                    .background(Color(hex: agent.accentHex).opacity(0.28), in: Capsule())
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                     .frame(maxWidth: 68)
@@ -1022,12 +1033,16 @@ struct OfficeFloorView: View {
                             .frame(maxWidth: 140)
                             Text("\(provName) · \(agent.modelId)")
                                 .font(.system(size: 8, design: .monospaced))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.68) : Color.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                                 .frame(maxWidth: 138)
                         }
                         .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(red: 0.08, green: 0.11, blue: 0.17).opacity(colorScheme == .dark ? 0.74 : 0.14))
+                        )
                         .liquidGlassCard(cornerRadius: 8, tint: isSelected ? Color(hex: agent.accentHex) : nil, interactive: true)
                     }
                     .position(x: pt.x, y: pt.y - 6)
@@ -1064,7 +1079,7 @@ struct OfficeFloorView: View {
                             engine.moveAgent(agent.id, to: Point2D(x: 0.76, y: 0.78), zone: .serverRack, status: agent.status.isBusy ? nil : .chatting, bubble: "🖥️ Mac Hub kontrolü")
                         }
                         Divider()
-                        Menu("Bikini Stilini Değiştir") {
+                        Menu("Karakter Stilini Değiştir") {
                             ForEach(OfficeAvatarPreset.allPresets) { preset in
                                 Button {
                                     var updated = agent
@@ -1338,6 +1353,120 @@ struct OfficeFloorView: View {
     }
 }
 
+
+private struct IsometricGlassDeskView: View {
+    let accent: Color
+    let working: Bool
+    let isSelected: Bool
+    let isDark: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let w = size.width
+            let h = size.height
+            let cx = w * 0.5
+            let cy = h * 0.54
+
+            // 1) Yumuşak zemin gölgesi
+            ctx.fill(
+                Path(ellipseIn: CGRect(x: cx - 54, y: cy + 8, width: 108, height: 34)),
+                with: .radialGradient(
+                    Gradient(colors: [Color.black.opacity(isDark ? 0.50 : 0.25), .clear]),
+                    center: CGPoint(x: cx, y: cy + 25),
+                    startRadius: 4,
+                    endRadius: 56
+                )
+            )
+
+            // 2) Ergonomik döner sandalye (masanın hafif arkasında / sağında)
+            let chairSeat = CGRect(x: cx + 10, y: cy - 6, width: 24, height: 14)
+            let chairBack = CGRect(x: cx + 14, y: cy - 22, width: 20, height: 18)
+            ctx.fill(Path(ellipseIn: CGRect(x: cx + 14, y: cy + 10, width: 18, height: 8)), with: .color(Color(hex: "#1E2532")))
+            ctx.fill(Path(roundedRect: chairSeat, cornerRadius: 5), with: .color(Color(hex: "#2E384B")))
+            ctx.stroke(Path(roundedRect: chairSeat, cornerRadius: 5), with: .color(Color.white.opacity(0.20)), lineWidth: 0.8)
+            ctx.fill(Path(roundedRect: chairBack, cornerRadius: 6), with: .color(Color(hex: "#3A465C")))
+            ctx.stroke(Path(roundedRect: chairBack, cornerRadius: 6), with: .color(Color.white.opacity(0.25)), lineWidth: 0.9)
+
+            // 3) İzometrik masa ayakları (metalik)
+            let topFront = CGPoint(x: cx - 2, y: cy + 16)
+            let topLeft = CGPoint(x: cx - 52, y: cy - 4)
+            let topBack = CGPoint(x: cx + 4, y: cy - 22)
+            let topRight = CGPoint(x: cx + 52, y: cy - 2)
+
+            for legTop in [topLeft, topFront, topRight] {
+                var leg = Path()
+                leg.move(to: legTop)
+                leg.addLine(to: CGPoint(x: legTop.x, y: legTop.y + 18))
+                ctx.stroke(leg, with: .color(Color(hex: "#94A3B8").opacity(0.75)), style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+            }
+
+            // 4) Buzlu cam izometrik masa tablası + cyan kenar parıltısı
+            var deskTop = Path()
+            deskTop.move(to: topBack)
+            deskTop.addLine(to: topRight)
+            deskTop.addLine(to: topFront)
+            deskTop.addLine(to: topLeft)
+            deskTop.closeSubpath()
+
+            ctx.fill(
+                deskTop,
+                with: .linearGradient(
+                    Gradient(colors: [
+                        Color(red: 0.65, green: 0.86, blue: 0.98).opacity(isSelected ? 0.34 : 0.24),
+                        Color(red: 0.22, green: 0.38, blue: 0.56).opacity(0.32)
+                    ]),
+                    startPoint: topBack,
+                    endPoint: topFront
+                )
+            )
+            ctx.stroke(
+                deskTop,
+                with: .color((isSelected || working ? accent : Color.cyan).opacity(isSelected ? 0.92 : 0.68)),
+                lineWidth: isSelected ? 1.6 : 1.15
+            )
+
+            // 5) Parlak cyan stüdyo monitörü (izometrik sol-arkaya dönük)
+            let standPt = CGPoint(x: cx - 10, y: cy - 8)
+            var stand = Path()
+            stand.move(to: standPt)
+            stand.addLine(to: CGPoint(x: standPt.x, y: standPt.y - 7))
+            ctx.stroke(stand, with: .color(Color(hex: "#CBD5E1")), lineWidth: 2.2)
+
+            var screen = Path()
+            let sBL = CGPoint(x: cx - 28, y: cy - 10)
+            let sBR = CGPoint(x: cx + 6, y: cy - 20)
+            let sTR = CGPoint(x: cx + 6, y: cy - 42)
+            let sTL = CGPoint(x: cx - 28, y: cy - 31)
+            screen.move(to: sBL)
+            screen.addLine(to: sBR)
+            screen.addLine(to: sTR)
+            screen.addLine(to: sTL)
+            screen.closeSubpath()
+
+            ctx.fill(
+                screen,
+                with: .linearGradient(
+                    Gradient(colors: [Color(hex: "#0284C7"), Color(hex: "#38BDF8")]),
+                    startPoint: sBL,
+                    endPoint: sTR
+                )
+            )
+            ctx.stroke(screen, with: .color(Color(hex: "#0F172A")), lineWidth: 1.5)
+            ctx.fill(Path(ellipseIn: CGRect(x: cx - 13, y: cy - 36, width: 3.5, height: 3.5)), with: .color(working ? accent : .green))
+
+            // 6) Mini saksı bitkisi + klavye
+            let pot = CGRect(x: cx - 40, y: cy - 12, width: 8, height: 7)
+            ctx.fill(Path(roundedRect: pot, cornerRadius: 2), with: .color(Color(hex: "#CBD5E1")))
+            ctx.fill(Path(ellipseIn: CGRect(x: cx - 42, y: cy - 17, width: 12, height: 7)), with: .color(Color(hex: "#22C55E")))
+
+            var kb = Path()
+            kb.move(to: CGPoint(x: cx - 12, y: cy + 3))
+            kb.addLine(to: CGPoint(x: cx + 4, y: cy - 1))
+            ctx.stroke(kb, with: .color(Color.white.opacity(0.65)), style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+        }
+        .frame(width: 132, height: 86)
+    }
+}
 
 private struct FloorWalkMarkerView: View {
     let accent: Color

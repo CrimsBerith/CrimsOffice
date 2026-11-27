@@ -2168,4 +2168,69 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         XCTAssertTrue(engine.activeBeams.isEmpty)
         XCTAssertTrue(engine.flyingPackets.isEmpty)
     }
+
+    @MainActor
+    func testPowerStackDefaultsWorkspaceSwitchActivationAndGlobalGodNodes() throws {
+        // 1. Default AppConfig activates Caveman (.full), RTK AI, and Graphify out of the box
+        let def = AppConfig.makeDefault()
+        XCTAssertEqual(def.cavemanMode, .full)
+        XCTAssertTrue(def.enableRTKProxy)
+        XCTAssertTrue(def.injectGraphifyReport)
+        XCTAssertTrue(def.enabledSkillIds.contains("rtk-proxy"))
+        XCTAssertTrue(def.enabledSkillIds.contains("graphify"))
+        XCTAssertTrue(def.enabledSkillIds.contains("caveman"))
+
+        // 2. Switching workspace ensures Caveman/RTK/Graphify stay active across every project and loads its Graphify snapshot
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path
+        )
+        XCTAssertEqual(engine.cavemanMode, .full)
+
+        let secondProj = tmpWorkspace.appendingPathComponent("second_project", isDirectory: true)
+        let graphDir = secondProj.appendingPathComponent("graphify-out", isDirectory: true)
+        try FileManager.default.createDirectory(at: graphDir, withIntermediateDirectories: true)
+
+        // Build >420 links pointing to node "god_hub" (last in raw node list) to verify global degree calculation
+        var links: [[String: Any]] = []
+        var nodes: [[String: Any]] = []
+        for i in 0..<430 {
+            let nid = "leaf_\(i)"
+            nodes.append(["id": nid, "label": "Leaf\(i)", "community": 0, "file": "File\(i).swift"])
+            links.append(["source": "god_hub", "target": nid, "relation": "calls"])
+        }
+        nodes.append(["id": "god_hub", "label": "GlobalGodHub", "community": 1, "file": "Core.swift"])
+        let graphData = try JSONSerialization.data(withJSONObject: ["nodes": nodes, "links": links])
+        try graphData.write(to: graphDir.appendingPathComponent("graph.json"))
+        try "# Graph Report\n- GlobalGodHub controls 430 dependencies".write(
+            to: graphDir.appendingPathComponent("GRAPH_REPORT.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        engine.cavemanMode = .off
+        engine.enableRTKProxy = false
+        engine.injectGraphifyReport = false
+        for i in engine.skills.indices where ["rtk-proxy", "graphify", "caveman"].contains(engine.skills[i].id) {
+            engine.skills[i].isEnabled = false
+        }
+
+        engine.setWorkspacePath(secondProj.path)
+        XCTAssertEqual(engine.cavemanMode, .full)
+        XCTAssertTrue(engine.enableRTKProxy)
+        XCTAssertTrue(engine.injectGraphifyReport)
+        for skillId in ["rtk-proxy", "graphify", "caveman"] {
+            XCTAssertTrue(engine.skills.first(where: { $0.id == skillId })?.isEnabled == true, "Missing auto-enabled skill \(skillId)")
+        }
+
+        let snap = try XCTUnwrap(engine.graphSnapshot)
+        XCTAssertEqual(snap.godNodes.first?.label, "GlobalGodHub")
+        XCTAssertEqual(snap.godNodes.first?.degree, 430)
+
+        let prompt = engine.assembleEffectiveSystemPrompt(for: engine.agents[0], userPrompt: "Mimarisi nasıl?")
+        XCTAssertTrue(prompt.contains("[PROJE POWER STACK AKTİF]"))
+        XCTAssertTrue(prompt.contains("[GRAPHIFY BİLGİ GRAFI ÖZETİ]"))
+        XCTAssertTrue(prompt.contains("CAVEMAN") || prompt.contains("Caveman"))
+    }
 }

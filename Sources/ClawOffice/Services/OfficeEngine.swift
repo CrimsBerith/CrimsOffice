@@ -472,6 +472,8 @@ final class OfficeEngine: ObservableObject {
     @Published var activeWalkMotions: [UUID: AgentWalkMotion] = [:]
     private var walkTokens: [UUID: UUID] = [:]
     private var ambientStepIndex: Int = 0
+    private var graphifyIndexingPaths: Set<String> = []
+    private var lastGraphifyIndexedAt: [String: Date] = [:]
     @Published private(set) var modelMetrics: [ModelRouteKey: ModelRuntimeMetrics] = [:]
     @Published private(set) var compactionEventCount: Int = 0
     let persistConfig: Bool
@@ -550,6 +552,7 @@ final class OfficeEngine: ObservableObject {
 
         OpenClawWorkspaceService.ensureOpenClawWorkspaceExists(at: self.openClawHomePath)
         refreshWorkspaceAndSkills(enabledIds: Set(cfg.enabledSkillIds))
+        ensureProjectPowerStackActive(for: self.workspacePath, scheduleAutoIndex: false, reason: "Başlangıç")
         if persistConfig, let warn = ConfigStore.shared.lastLoadWarning {
             log(.warning, source: "Sistem", warn)
         }
@@ -560,6 +563,7 @@ final class OfficeEngine: ObservableObject {
             checkProvidersHealth()
             Task {
                 await refreshCLITools()
+                await scheduleGraphifyAutoIndexIfNeeded(for: self.workspacePath, incremental: false)
                 await ensureSwarmsRuntimeReady()
                 await refreshOpenClawEcosystem()
                 await runSecurityAudit()
@@ -683,8 +687,84 @@ final class OfficeEngine: ObservableObject {
             agents[i].agyConversationId = nil
         }
         workspaceRefreshNonce += 1
-        saveConfig()
         refreshWorkspaceAndSkills()
+        ensureProjectPowerStackActive(for: trimmed, scheduleAutoIndex: persistConfig, reason: "Proje değişimi")
+        saveConfig()
+    }
+
+    /// Her projede Graphify AI, Caveman ve RTK AI katmanlarının aktif olmasını ve bilgi grafının otomatik oluşmasını sağlar.
+    func ensureProjectPowerStackActive(for targetPath: String, scheduleAutoIndex: Bool = true, reason: String = "Proje") {
+        var changed = false
+        if cavemanMode == .off {
+            cavemanMode = .full
+            changed = true
+        }
+        if !enableRTKProxy {
+            enableRTKProxy = true
+            changed = true
+        }
+        if !injectGraphifyReport {
+            injectGraphifyReport = true
+            changed = true
+        }
+        let requiredPowerSkills: Set<String> = ["rtk-proxy", "graphify", "caveman"]
+        for i in skills.indices where requiredPowerSkills.contains(skills[i].id) && !skills[i].isEnabled {
+            skills[i].isEnabled = true
+            changed = true
+        }
+        if changed && persistConfig {
+            saveConfig()
+        }
+        if scheduleAutoIndex && persistConfig {
+            Task { @MainActor [weak self] in
+                await self?.scheduleGraphifyAutoIndexIfNeeded(for: targetPath, incremental: false)
+            }
+        }
+    }
+
+    func scheduleGraphifyAutoIndexIfNeeded(for targetPath: String, incremental: Bool) async {
+        guard persistConfig, injectGraphifyReport else { return }
+        let fm = FileManager.default
+        let standardized = URL(fileURLWithPath: targetPath).standardizedFileURL.path
+        let home = fm.homeDirectoryForCurrentUser.standardizedFileURL.path
+        guard !standardized.isEmpty, standardized != "/", standardized != home else { return }
+        guard !graphifyIndexingPaths.contains(standardized) else { return }
+        guard !PowerShellTools.which("graphify").isEmpty else { return }
+
+        let graphJsonPath = URL(fileURLWithPath: standardized).appendingPathComponent("graphify-out/graph.json").path
+        let reportPath = URL(fileURLWithPath: standardized).appendingPathComponent("graphify-out/GRAPH_REPORT.md").path
+        let hasGraph = fm.fileExists(atPath: graphJsonPath) && fm.fileExists(atPath: reportPath)
+
+        if hasGraph && !incremental {
+            if URL(fileURLWithPath: workspacePath).standardizedFileURL.path == standardized && graphSnapshot == nil {
+                graphSnapshot = OpenClawWorkspaceService.loadGraphifySnapshot(workspacePath: standardized)
+            }
+            return
+        }
+        if hasGraph, let lastAt = lastGraphifyIndexedAt[standardized], Date().timeIntervalSince(lastAt) < 15 {
+            return
+        }
+
+        graphifyIndexingPaths.insert(standardized)
+        defer {
+            graphifyIndexingPaths.remove(standardized)
+            lastGraphifyIndexedAt[standardized] = Date()
+        }
+
+        let projName = URL(fileURLWithPath: standardized).lastPathComponent
+        if !hasGraph {
+            log(.info, source: "Graphify", "📊 '\(projName)' için Graphify bilgi grafı otomatik oluşturuluyor...")
+        }
+        let res = await OpenClawWorkspaceService.runGraphifyUpdate(workspacePath: standardized, force: !hasGraph)
+        if res.succeeded {
+            if URL(fileURLWithPath: workspacePath).standardizedFileURL.path == standardized {
+                graphSnapshot = OpenClawWorkspaceService.loadGraphifySnapshot(workspacePath: standardized)
+            }
+            let nodeCount = graphSnapshot?.nodes.count ?? 0
+            log(.success, source: "Graphify", "📊 '\(projName)' bilgi grafı aktif (\(nodeCount > 0 ? "\(nodeCount) çekirdek düğüm" : "GRAPH_REPORT.md hazır")).")
+        } else {
+            log(.warning, source: "Graphify", "⚠️ '\(projName)' graf güncellemesi atlandı: \(res.output.prefix(120))")
+        }
     }
 
     func refreshWorkspaceAndSkills(enabledIds: Set<String>? = nil) {
@@ -1549,8 +1629,19 @@ final class OfficeEngine: ObservableObject {
             sections.append(planStatusBoardSummary())
         }
 
+        var powerStackFlags: [String] = []
         if cavemanMode != .off {
+            powerStackFlags.append("Caveman: \(cavemanMode.rawValue)")
             sections.append(cavemanMode.systemDirective)
+        }
+        if enableRTKProxy {
+            powerStackFlags.append("RTK AI: Aktif (git/swift/npm/pytest/ls/rg/go otomatik filtrelenir)")
+        }
+        if injectGraphifyReport {
+            powerStackFlags.append("Graphify AI: \(graphSnapshot != nil ? "Graf Hazır" : "Otomatik İndeksleniyor")")
+        }
+        if !powerStackFlags.isEmpty {
+            sections.append("[PROJE POWER STACK AKTİF]\n- " + powerStackFlags.joined(separator: "\n- ") + "\n- Önce `graphify_query` / `GRAPH_REPORT.md` ile grafı sorgula, shell/test komutlarını RTK ile kısa tut.")
         }
 
         let lowerModel = agent.modelId.lowercased()
@@ -3113,6 +3204,12 @@ final class OfficeEngine: ObservableObject {
                 latencyMs: max(0, totalLatencyMs - res.latencyMs)
             )
             saveConfig()
+            if persistConfig && handoffDepth == 0 && didEditCodeInTurn {
+                let targetWS = workspacePath
+                Task { @MainActor [weak self] in
+                    await self?.scheduleGraphifyAutoIndexIfNeeded(for: targetWS, incremental: true)
+                }
+            }
             log(.success, source: agentName, "Tamamlandı (\(activeModelName) · \(totalLatencyMs) ms)")
             let replyContent = finalMsg?.content ?? res.content
             if telegramNotifyEnabled && handoffDepth == 0 && !telegramChatId.isEmpty {

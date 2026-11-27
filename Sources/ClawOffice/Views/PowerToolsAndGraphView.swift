@@ -157,7 +157,7 @@ struct PowerToolsAndGraphView: View {
                             runCLI(cmd)
                         }.liquidGlassButton(prominent: true, tint: .cyan).disabled(isRunningCLI)
                     }
-                    Button("Projeyi Graphify Et") { runCLI("graphify . --no-viz") }
+                    Button("Projeyi Graphify Et") { runCLI("graphify update . --force") }
                         .liquidGlassButton(prominent: true, tint: .cyan).disabled(isRunningCLI)
                     Button("Artımlı Güncelle") { runCLI("graphify update .") }
                         .liquidGlassButton(prominent: false).disabled(isRunningCLI)

@@ -1495,7 +1495,7 @@ struct AppConfig: Codable, Sendable {
         self.agents = (try? c.decodeIfPresent(LossyDecodableArray<OfficeAgent>.self, forKey: .agents))?.elements ?? []
         self.workspacePath = (try? c.decodeIfPresent(String.self, forKey: .workspacePath)) ?? Self.detectDefaultWorkspacePath()
         self.openClawHomePath = (try? c.decodeIfPresent(String.self, forKey: .openClawHomePath)) ?? ""
-        self.cavemanMode = (try? c.decodeIfPresent(CavemanMode.self, forKey: .cavemanMode)) ?? .off
+        self.cavemanMode = (try? c.decodeIfPresent(CavemanMode.self, forKey: .cavemanMode)) ?? .full
         self.enableRTKProxy = (try? c.decodeIfPresent(Bool.self, forKey: .enableRTKProxy)) ?? true
         self.enableLocalTools = (try? c.decodeIfPresent(Bool.self, forKey: .enableLocalTools)) ?? true
         self.allowFileWrites = (try? c.decodeIfPresent(Bool.self, forKey: .allowFileWrites)) ?? true
@@ -1505,7 +1505,10 @@ struct AppConfig: Codable, Sendable {
         self.injectAgentsMD = (try? c.decodeIfPresent(Bool.self, forKey: .injectAgentsMD)) ?? true
         self.injectOpenClawMemory = (try? c.decodeIfPresent(Bool.self, forKey: .injectOpenClawMemory)) ?? true
         self.injectGraphifyReport = (try? c.decodeIfPresent(Bool.self, forKey: .injectGraphifyReport)) ?? true
-        self.enabledSkillIds = (try? c.decodeIfPresent([String].self, forKey: .enabledSkillIds)) ?? []
+        let decodedSkills = (try? c.decodeIfPresent([String].self, forKey: .enabledSkillIds)) ?? []
+        self.enabledSkillIds = decodedSkills.isEmpty
+            ? ["rtk-proxy", "graphify", "caveman", "swift-audit", "self-evolution", "ecosystem-scout", "swarms"]
+            : decodedSkills
         self.enableAmbientMovement = (try? c.decodeIfPresent(Bool.self, forKey: .enableAmbientMovement)) ?? true
         self.enableSocialChatter = (try? c.decodeIfPresent(Bool.self, forKey: .enableSocialChatter)) ?? true
         self.enableStreaming = (try? c.decodeIfPresent(Bool.self, forKey: .enableStreaming)) ?? true
@@ -1556,7 +1559,7 @@ struct AppConfig: Codable, Sendable {
             agents: OfficeAgent.defaultAgents(antigravityId: agyId, evrenId: evrenId),
             workspacePath: wsPath,
             openClawHomePath: home + "/.openclaw/workspace",
-            cavemanMode: .off,
+            cavemanMode: .full,
             enableRTKProxy: true,
             enableLocalTools: true,
             allowFileWrites: true,
@@ -1578,7 +1581,7 @@ struct AppConfig: Codable, Sendable {
     }
 }
 
-// MARK: - Crims Office Bikini Avatars & OpenClaw / OpenClaw-Office Parity Models
+// MARK: - Crims Office Chibi Avatars & OpenClaw / OpenClaw-Office Parity Models
 
 struct OfficeAvatarPreset: Identifiable, Hashable, Sendable {
     let assetName: String
@@ -1587,16 +1590,16 @@ struct OfficeAvatarPreset: Identifiable, Hashable, Sendable {
     var id: String { assetName }
 
     static let allPresets: [OfficeAvatarPreset] = [
-        OfficeAvatarPreset(assetName: "bikini_crimson", label: "Bordo Bikini · Tablet", accentHex: "#E11D48"),
-        OfficeAvatarPreset(assetName: "bikini_cyan", label: "Turkuaz Bikini · Kulaklık", accentHex: "#06B6D4"),
-        OfficeAvatarPreset(assetName: "bikini_mint", label: "Mint Bikini · Kahve", accentHex: "#10B981"),
-        OfficeAvatarPreset(assetName: "bikini_lavender", label: "Lavanta Bikini · Not", accentHex: "#A855F7"),
-        OfficeAvatarPreset(assetName: "bikini_gold", label: "Altın & Beyaz · Gözlük", accentHex: "#F59E0B"),
-        OfficeAvatarPreset(assetName: "bikini_coral", label: "Mercan Bikini · Laptop", accentHex: "#FB7185"),
-        OfficeAvatarPreset(assetName: "bikini_cobalt", label: "Kobalt Bikini · iPad", accentHex: "#3B82F6"),
-        OfficeAvatarPreset(assetName: "bikini_rosegold", label: "Rose Gold · Akıllı Saat", accentHex: "#EC4899"),
-        OfficeAvatarPreset(assetName: "bikini_ruby", label: "Yakut Siyah · Espresso", accentHex: "#DC2626"),
-        OfficeAvatarPreset(assetName: "bikini_emerald", label: "Zümrüt Bikini · Kulaklık", accentHex: "#14B8A6")
+        OfficeAvatarPreset(assetName: "bikini_crimson", label: "Kızıl Hoodie · Lead", accentHex: "#E11D48"),
+        OfficeAvatarPreset(assetName: "bikini_cyan", label: "Turuncu Aloha · QA", accentHex: "#06B6D4"),
+        OfficeAvatarPreset(assetName: "bikini_mint", label: "Sarı Saç · Mimar", accentHex: "#10B981"),
+        OfficeAvatarPreset(assetName: "bikini_lavender", label: "Çiçekli · UI/UX", accentHex: "#A855F7"),
+        OfficeAvatarPreset(assetName: "bikini_gold", label: "Denim Gözlük · Analist", accentHex: "#F59E0B"),
+        OfficeAvatarPreset(assetName: "bikini_coral", label: "Mercan Bob · Frontend", accentHex: "#FB7185"),
+        OfficeAvatarPreset(assetName: "bikini_cobalt", label: "Kobalt Vizör · Sistem", accentHex: "#3B82F6"),
+        OfficeAvatarPreset(assetName: "bikini_rosegold", label: "Rose Gold · AI Lab", accentHex: "#EC4899"),
+        OfficeAvatarPreset(assetName: "bikini_ruby", label: "Yakut Siyah · Güvenlik", accentHex: "#DC2626"),
+        OfficeAvatarPreset(assetName: "bikini_emerald", label: "Zümrüt Hoodie · Cloud", accentHex: "#14B8A6")
     ]
 
     static func defaultAsset(forIndex index: Int) -> String {
