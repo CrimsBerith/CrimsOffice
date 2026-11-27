@@ -148,6 +148,8 @@ struct WorkspaceAndSkillsView: View {
 
                         Button { engine.refreshWorkspaceAndSkills() } label: { Image(systemName: "arrow.clockwise") }
                             .liquidGlassButton(prominent: false)
+                            .accessibilityLabel("Çalışma alanı ve skilleri yenile")
+                            .help("Yenile")
                     }
 
                     HStack(spacing: 6) {
@@ -160,6 +162,7 @@ struct WorkspaceAndSkillsView: View {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                             }
                             .buttonStyle(.plain)
+                            .accessibilityLabel("Aramayı temizle")
                         }
                     }
                     .padding(.horizontal, 10).padding(.vertical, 6)
@@ -300,59 +303,61 @@ struct WorkspaceAndSkillsView: View {
     private var skillWorkbenchSheet: some View {
         ZStack {
             AmbientGlassBackdrop(accent: .teal)
-            VStack(alignment: .leading, spacing: 12) {
-                GlassSectionHeader(
-                    title: "Skill Workbench (SKILL.md Atölyesi)",
-                    subtitle: "\(engine.openClawHomePath)/skills",
-                    systemImage: "sparkles.square.filled.on.square",
-                    tint: .teal
-                )
-                HStack(spacing: 8) {
-                    TextField("Slug (ör: swift-release-check)", text: $wbSlug).textFieldStyle(.roundedBorder)
-                    TextField("Skill Adı", text: $wbName).textFieldStyle(.roundedBorder)
-                }
-                TextField("Kısa Açıklama (progressive disclosure özeti)", text: $wbDesc).textFieldStyle(.roundedBorder)
-                TextField("Tetikleyici Kelimeler (virgülle: swift, build, test)", text: $wbTriggers).textFieldStyle(.roundedBorder)
-                TextEditor(text: $wbBody)
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(minHeight: 190)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .liquidGlassCard(cornerRadius: 12)
-                if !wbFeedback.isEmpty {
-                    Text(wbFeedback).font(.caption).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Spacer()
-                    Button("Kapat") { showSkillWorkbench = false }.liquidGlassButton(prominent: false)
-                    Button("SKILL.md Kaydet") {
-                        do {
-                            let rawTriggers = wbTriggers
-                                .split(separator: ",")
-                                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                .filter { !$0.isEmpty }
-                            let path = try OpenClawWorkspaceService.saveEvolvedSkill(
-                                slug: wbSlug.isEmpty ? wbName : wbSlug,
-                                name: wbName.isEmpty ? wbSlug : wbName,
-                                description: wbDesc,
-                                body: wbBody,
-                                openClawHome: engine.openClawHomePath,
-                                triggers: rawTriggers
-                            )
-                            let savedSlug = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
-                            let keepEnabled = Set(engine.skills.filter { $0.isEnabled }.map { $0.id } + [savedSlug])
-                            engine.refreshWorkspaceAndSkills(enabledIds: keepEnabled)
-                            engine.saveConfig()
-                            wbFeedback = "Kaydedildi ve aktifleştirildi ✓ (\(path))"
-                        } catch {
-                            wbFeedback = "Hata: \(error.localizedDescription)"
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    GlassSectionHeader(
+                        title: "Skill Workbench (SKILL.md Atölyesi)",
+                        subtitle: "\(engine.openClawHomePath)/skills",
+                        systemImage: "sparkles.square.filled.on.square",
+                        tint: .teal
+                    )
+                    HStack(spacing: 8) {
+                        TextField("Slug (ör: swift-release-check)", text: $wbSlug).textFieldStyle(.roundedBorder)
+                        TextField("Skill Adı", text: $wbName).textFieldStyle(.roundedBorder)
                     }
-                    .liquidGlassButton(prominent: true, tint: .teal)
-                    .disabled(wbSlug.trimmingCharacters(in: .whitespaces).isEmpty && wbName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    TextField("Kısa Açıklama (progressive disclosure özeti)", text: $wbDesc).textFieldStyle(.roundedBorder)
+                    TextField("Tetikleyici Kelimeler (virgülle: swift, build, test)", text: $wbTriggers).textFieldStyle(.roundedBorder)
+                    TextEditor(text: $wbBody)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(minHeight: 190)
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .liquidGlassCard(cornerRadius: 12)
+                    if !wbFeedback.isEmpty {
+                        Text(wbFeedback).font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Spacer()
+                        Button("Kapat") { showSkillWorkbench = false }.liquidGlassButton(prominent: false)
+                        Button("SKILL.md Kaydet") {
+                            do {
+                                let rawTriggers = wbTriggers
+                                    .split(separator: ",")
+                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                                    .filter { !$0.isEmpty }
+                                let path = try OpenClawWorkspaceService.saveEvolvedSkill(
+                                    slug: wbSlug.isEmpty ? wbName : wbSlug,
+                                    name: wbName.isEmpty ? wbSlug : wbName,
+                                    description: wbDesc,
+                                    body: wbBody,
+                                    openClawHome: engine.openClawHomePath,
+                                    triggers: rawTriggers
+                                )
+                                let savedSlug = URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent
+                                let keepEnabled = Set(engine.skills.filter { $0.isEnabled }.map { $0.id } + [savedSlug])
+                                engine.refreshWorkspaceAndSkills(enabledIds: keepEnabled)
+                                engine.saveConfig()
+                                wbFeedback = "Kaydedildi ve aktifleştirildi ✓ (\(path))"
+                            } catch {
+                                wbFeedback = "Hata: \(error.localizedDescription)"
+                            }
+                        }
+                        .liquidGlassButton(prominent: true, tint: .teal)
+                        .disabled(wbSlug.trimmingCharacters(in: .whitespaces).isEmpty && wbName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
                 }
+                .padding(20)
             }
-            .padding(20)
         }
         .frame(minWidth: 540, minHeight: 440)
     }

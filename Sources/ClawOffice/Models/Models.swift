@@ -150,7 +150,8 @@ struct APIProviderConfig: Identifiable, Codable, Hashable, Sendable {
 
     var isConfigured: Bool {
         if kind == .antigravityCLI {
-            return Self.resolveAntigravityCLIPath(hint: normalizedBaseURL) != nil
+            // Antigravity CLI backend is disabled by workspace policy in LLMClient
+            return false
         }
         let cleaned = normalizedBaseURL
         guard !cleaned.isEmpty,
@@ -246,6 +247,7 @@ struct APIProviderConfig: Identifiable, Codable, Hashable, Sendable {
                     "gpt-oss-120b-medium"
                 ],
                 defaultModel: "gemini-4-hydrogen-xhigh",
+                isEnabled: false,
                 fallbackProviderId: openRouterId
             ),
             APIProviderConfig(
@@ -1248,9 +1250,9 @@ struct OfficeAgent: Identifiable, Codable, Hashable, Sendable {
     }
 
     static func defaultAgents(antigravityId: UUID?, evrenId: UUID) -> [OfficeAgent] {
-        let hasAgy = antigravityId != nil && APIProviderConfig.resolveAntigravityCLIPath() != nil
-        let targetProvId = hasAgy ? (antigravityId ?? evrenId) : evrenId
-        let targetModel = hasAgy ? "gemini-4-hydrogen-xhigh" : "deepseek-v4.1-flash"
+        _ = antigravityId
+        let targetProvId = evrenId
+        let targetModel = "deepseek-v4.1-flash"
         return [
             OfficeAgent(
                 name: "Atlas",

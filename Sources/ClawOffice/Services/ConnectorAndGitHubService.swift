@@ -191,8 +191,9 @@ enum ConnectorAndGitHubService {
 
             // Inspect root files
             var rootFiles: [String] = []
-            if let contURL = URL(string: "https://api.github.com/repos/\(repoSlug)/contents?ref=\(percentEncoded(defaultBranch))"),
-               let contData = try? await fetchGitHubDataPreferringGH(apiPath: "repos/\(repoSlug)/contents", fallbackURL: contURL),
+            let encodedRef = percentEncoded(defaultBranch)
+            if let contURL = URL(string: "https://api.github.com/repos/\(repoSlug)/contents?ref=\(encodedRef)"),
+               let contData = try? await fetchGitHubDataPreferringGH(apiPath: "repos/\(repoSlug)/contents?ref=\(encodedRef)", fallbackURL: contURL),
                let arr = try? JSONSerialization.jsonObject(with: contData) as? [[String: Any]] {
                 rootFiles = arr.compactMap { $0["name"] as? String }
             }
@@ -313,7 +314,20 @@ enum ConnectorAndGitHubService {
            directURL.scheme?.lowercased() == "https" {
             do {
                 let rawText = try await fetchText(url: directURL)
-                return finalizeSkillInstall(rawMarkdown: rawText, defaultSlug: slugOverride ?? directURL.deletingLastPathComponent().lastPathComponent, sourceURL: trimmed, openClawHome: openClawHome)
+                let parentName = directURL.deletingLastPathComponent().lastPathComponent
+                let branchLike: Set<String> = ["main", "master", "head", "develop"]
+                let comps = directURL.pathComponents.filter { $0 != "/" }
+                let fallbackSlug: String
+                if let ov = slugOverride?.trimmingCharacters(in: .whitespacesAndNewlines), !ov.isEmpty {
+                    fallbackSlug = ov
+                } else if !branchLike.contains(parentName.lowercased()), !parentName.isEmpty {
+                    fallbackSlug = parentName
+                } else if comps.count >= 2 {
+                    fallbackSlug = comps[1]
+                } else {
+                    fallbackSlug = "github-skill"
+                }
+                return finalizeSkillInstall(rawMarkdown: rawText, defaultSlug: fallbackSlug, sourceURL: trimmed, openClawHome: openClawHome)
             } catch {
                 return (false, "Skill URL indirilemedi: \(error.localizedDescription)", nil)
             }
@@ -389,18 +403,14 @@ enum ConnectorAndGitHubService {
         var name = defaultSlug
         var desc = "GitHub'dan içe aktarılan OpenClaw skill'i (\(sourceURL))"
         var body = rawMarkdown
-        if rawMarkdown.hasPrefix("---") {
-            let parts = rawMarkdown.components(separatedBy: "---")
-            if parts.count >= 3 {
-                let front = parts[1]
-                body = parts.dropFirst(2).joined(separator: "---").trimmingCharacters(in: .whitespacesAndNewlines)
-                for line in front.components(separatedBy: .newlines) {
-                    let t = line.trimmingCharacters(in: .whitespaces)
-                    if t.hasPrefix("name:") {
-                        name = t.dropFirst(5).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
-                    } else if t.hasPrefix("description:") {
-                        desc = t.dropFirst(12).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
-                    }
+        if let parsed = OpenClawWorkspaceService.splitYAMLFrontmatter(rawMarkdown) {
+            body = parsed.body
+            for line in parsed.frontmatter.components(separatedBy: .newlines) {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix("name:") {
+                    name = t.dropFirst(5).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                } else if t.hasPrefix("description:") {
+                    desc = t.dropFirst(12).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
                 }
             }
         }
@@ -644,7 +654,7 @@ enum ConnectorAndGitHubService {
         }
 
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await noRedirectSession.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
             let formatted = prettyFormatData(data)
             let clipped = formatted.count > 10000 ? String(formatted.prefix(10000)) + "\n... [kısaltıldı]" : formatted
@@ -718,7 +728,7 @@ enum ConnectorAndGitHubService {
                 res = try await sendRPC(method: "tools/call", params: ["name": action, "arguments": parsedArgs], id: 2, sessionId: sid)
             }
             let clipped = res.body.count > 10000 ? String(res.body.prefix(10000)) + "\n... [kısaltıldı]" : res.body
-            let ok = (200...299).contains(res.status) && !clipped.contains("\"error\"")
+            let ok = (200...299).contains(res.status) && !hasJSONRPCError(res.body)
             return (ok, "[\(connector.name) · MCP HTTP \(res.status)]\n\(clipped)")
         } catch {
             return (false, "MCP HTTP hatası: \(error.localizedDescription)")
@@ -734,6 +744,9 @@ enum ConnectorAndGitHubService {
         let cmdLine = connector.endpointOrCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cmdLine.isEmpty else {
             return (false, "MCP stdio komutu boş.")
+        }
+        if PowerShellTools.isBlockedShellCommand(cmdLine) {
+            return (false, "Güvenlik politikası gereği MCP stdio komutu engellendi.")
         }
 
         let isToolsList = action.isEmpty || action.lowercased() == "tools/list" || action.lowercased() == "list"
@@ -786,7 +799,7 @@ enum ConnectorAndGitHubService {
         let lines = stdout.components(separatedBy: .newlines).filter { $0.contains("\"id\":2") || $0.contains("\"id\": 2") }
         let body = lines.last ?? (stdout.isEmpty ? stderr : stdout)
         let clipped = body.count > 10000 ? String(body.prefix(10000)) + "\n... [kısaltıldı]" : body
-        let ok = !clipped.isEmpty && !clipped.contains("\"error\"") && (procRes.exitCode == 0 || !lines.isEmpty)
+        let ok = !clipped.isEmpty && !hasJSONRPCError(body) && (procRes.exitCode == 0 || !lines.isEmpty)
         return (ok, "[\(connector.name) · MCP stdio]\n\(clipped)")
     }
 
@@ -866,7 +879,7 @@ enum ConnectorAndGitHubService {
                 }
 
                 if let inPipe, let stdinData {
-                    inPipe.fileHandleForWriting.write(stdinData)
+                    try? inPipe.fileHandleForWriting.write(contentsOf: stdinData)
                     try? inPipe.fileHandleForWriting.close()
                 }
 
@@ -968,7 +981,47 @@ enum ConnectorAndGitHubService {
         return String(decoding: data, as: UTF8.self)
     }
 
+    private static let queryValueAllowedCharacters = CharacterSet(
+        charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    )
+
+    private static let noRedirectSession: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        return URLSession(configuration: cfg, delegate: CrossHostRedirectGuardDelegate(), delegateQueue: nil)
+    }()
+
+    private final class CrossHostRedirectGuardDelegate: NSObject, URLSessionTaskDelegate {
+        func urlSession(
+            _ session: URLSession,
+            task: URLSessionTask,
+            willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest,
+            completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            if let origHost = task.originalRequest?.url?.host?.lowercased(),
+               let nextHost = request.url?.host?.lowercased(),
+               origHost == nextHost || nextHost.hasSuffix("." + origHost) {
+                completionHandler(request)
+            } else {
+                completionHandler(nil)
+            }
+        }
+    }
+
+    private static func hasJSONRPCError(_ raw: String) -> Bool {
+        var jsonCandidate = raw
+        if let firstBrace = raw.firstIndex(of: "{") {
+            jsonCandidate = String(raw[firstBrace...])
+        }
+        guard let data = jsonCandidate.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let errVal = obj["error"] else {
+            return false
+        }
+        return !(errVal is NSNull)
+    }
+
     private static func percentEncoded(_ value: String) -> String {
-        value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? value
+        value.addingPercentEncoding(withAllowedCharacters: queryValueAllowedCharacters) ?? value
     }
 }

@@ -4,8 +4,11 @@ import AppKit
 enum AppSection: String, CaseIterable, Identifiable {
     case office = "Sanal Ofis"
     case openClawHub = "OpenClaw · Maliyet · Cron"
+    case swarmTasks = "Çoklu Ajan & Swarms"
     case connectors = "Connectorlar & GitHub"
     case workspace = "OpenClaw · AGENTS.md · Skiller"
+    case powerTools = "Power Stack & Graphify"
+    case evolution = "Öz-Gelişim & Build"
     case providers = "API Sağlayıcıları"
     case logs = "Aktivite Günlüğü"
 
@@ -14,8 +17,11 @@ enum AppSection: String, CaseIterable, Identifiable {
         switch self {
         case .office: return "building.2.crop.circle.fill"
         case .openClawHub: return "gauge.with.dots.needle.67percent"
+        case .swarmTasks: return "person.3.sequence.fill"
         case .connectors: return "puzzlepiece.extension.fill"
         case .workspace: return "brain.head.profile"
+        case .powerTools: return "bolt.shield.fill"
+        case .evolution: return "hammer.circle.fill"
         case .providers: return "key.horizontal.fill"
         case .logs: return "terminal.fill"
         }
@@ -176,10 +182,16 @@ struct MainContentView: View {
                         OfficeFloorView()
                     case .openClawHub:
                         OpenClawControlCenterView()
+                    case .swarmTasks:
+                        MultiAgentTaskView()
                     case .connectors:
                         ConnectorsAndHubView()
                     case .workspace:
                         WorkspaceAndSkillsView()
+                    case .powerTools:
+                        PowerToolsAndGraphView()
+                    case .evolution:
+                        EvolutionAndProjectView()
                     case .providers:
                         ProvidersSettingsView()
                     case .logs:
@@ -242,9 +254,9 @@ struct AddAgentSheet: View {
 
         let normalizedKeyword = preferredKeyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
-        // 1) Exact model id match (e.g. "kilo-auto/free").
-        if models.contains(where: { $0.lowercased() == normalizedKeyword }) {
-            return normalizedKeyword
+        // 1) Exact model id match preserving provider's original casing (e.g. "Kilo-Auto/free" or "kilo-auto/free").
+        if let exactMatch = models.first(where: { $0.lowercased() == normalizedKeyword }) {
+            return exactMatch
         }
 
         // 2) Family / keyword match (e.g. "deepseek", "qwen", "gemini", "claude").
@@ -512,12 +524,12 @@ struct AddAgentSheet: View {
         .frame(minWidth: 560, minHeight: 580, idealHeight: 640)
         .onAppear {
             avatarAsset = OfficeAvatarPreset.defaultAsset(forIndex: engine.agents.count)
-            if let primary = engine.providers.first(where: { $0.kind == .antigravityCLI && $0.isConfigured })
-                ?? engine.providers.first(where: { $0.kind == .evren && $0.isConfigured })
-                ?? engine.providers.first(where: { $0.isConfigured })
+            if let primary = engine.providers.first(where: { $0.kind == .evren && $0.isConfigured })
+                ?? engine.providers.first(where: { $0.kind != .antigravityCLI && $0.isConfigured })
+                ?? engine.providers.first(where: { $0.kind != .antigravityCLI })
                 ?? engine.providers.first {
                 providerId = primary.id
-                modelId = primary.defaultModel.isEmpty ? (primary.models.first ?? "gemini-4-hydrogen-xhigh") : primary.defaultModel
+                modelId = primary.defaultModel.isEmpty ? (primary.models.first ?? "deepseek-v4.1-flash") : primary.defaultModel
             }
         }
     }
@@ -529,13 +541,21 @@ struct MenuBarContentView: View {
     @State private var quick = ""
 
     var body: some View {
-        let selectedBusy = engine.selectedAgent?.status.isBusy ?? false
+        let selectedAgent = engine.selectedAgent
+        let selectedBusy = selectedAgent?.status.isBusy ?? false
         ZStack {
-            AmbientGlassBackdrop(accent: Color(hex: engine.selectedAgent?.accentHex ?? "#38BDF8"))
+            AmbientGlassBackdrop(accent: Color(hex: selectedAgent?.accentHex ?? "#38BDF8"))
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     CrimsBrandLogoView(size: 20)
-                    Text("Crims Office v4").font(.headline)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Crims Office v4").font(.headline)
+                        if let ag = selectedAgent {
+                            Text("\(ag.emoji) \(ag.name) · \(ag.status.rawValue)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                     Text(engine.cavemanMode == .off ? "Normal" : "Caveman")
                         .font(.caption2.bold())
@@ -543,35 +563,37 @@ struct MenuBarContentView: View {
                         .liquidGlassCapsule(tint: engine.cavemanMode == .off ? nil : .yellow, interactive: false)
                 }
                 HStack {
-                    TextField("Seçili ajana hızlı görev...", text: $quick)
+                    TextField(selectedBusy ? "\(selectedAgent?.name ?? "Ajan") çalışıyor..." : "Seçili ajana hızlı görev...", text: $quick)
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .liquidGlassCard(cornerRadius: 10)
+                        .disabled(selectedBusy || selectedAgent == nil)
                         .onSubmit {
-                            guard !selectedBusy else { return }
+                            guard !selectedBusy, let id = selectedAgent?.id else { return }
                             let t = quick.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !t.isEmpty, let id = engine.selectedAgent?.id {
+                            if !t.isEmpty {
                                 engine.sendMessage(to: id, text: t)
                                 quick = ""
                             }
                         }
-                    if selectedBusy, let active = engine.selectedAgent {
+                    if selectedBusy, let active = selectedAgent {
                         Button("Durdur") {
                             engine.cancelTask(for: active.id)
                         }
                         .liquidGlassButton(prominent: true, tint: .red)
                         .controlSize(.small)
+                        .accessibilityLabel("Aktif görevi durdur")
                     } else {
                         Button("Gönder") {
                             let t = quick.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !t.isEmpty, let id = engine.selectedAgent?.id {
+                            if !t.isEmpty, let id = selectedAgent?.id {
                                 engine.sendMessage(to: id, text: t)
                                 quick = ""
                             }
                         }
                         .liquidGlassButton(prominent: true)
                         .controlSize(.small)
-                        .disabled(quick.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || engine.selectedAgent == nil)
+                        .disabled(quick.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedAgent == nil)
                     }
                 }
                 HStack {

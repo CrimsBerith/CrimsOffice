@@ -81,36 +81,9 @@ final class ConfigStore {
         lastLoadWarning = nil
         var didNormalize = migrateAPIKeysToKeychainIfNeeded(&cfg)
 
-        // Register Antigravity CLI (agy) backend if missing from saved config
-        if !cfg.providers.contains(where: { $0.kind == .antigravityCLI }) {
-            let agyId = UUID(uuidString: "66666666-6666-6666-6666-666666666666") ?? UUID()
-            let openRouterId = cfg.providers.first(where: { $0.kind == .openRouter })?.id
-                ?? UUID(uuidString: "33333333-3333-3333-3333-333333333333")
-            let agyProv = APIProviderConfig(
-                id: agyId,
-                name: "Antigravity CLI (Gemini 4 Hydrogen)",
-                kind: .antigravityCLI,
-                baseURL: APIProviderConfig.resolveAntigravityCLIPath() ?? (fm.homeDirectoryForCurrentUser.path + "/.local/bin/agy"),
-                authStyle: .none,
-                models: [
-                    "gemini-4-hydrogen-xhigh",
-                    "gemini-4-hydrogen-high",
-                    "gemini-4-hydrogen-medium",
-                    "gemini-4-hydrogen-low",
-                    "gemini-3.8-flash-high",
-                    "claude-sonnet-4-6",
-                    "claude-opus-4-6-thinking",
-                    "gpt-oss-120b-medium"
-                ],
-                defaultModel: "gemini-4-hydrogen-xhigh",
-                fallbackProviderId: openRouterId
-            )
-            cfg.providers.insert(agyProv, at: 0)
-            if agyProv.isConfigured, let atlasIdx = cfg.agents.firstIndex(where: { $0.name.lowercased() == "atlas" }) {
-                cfg.agents[atlasIdx].providerId = agyId
-                cfg.agents[atlasIdx].modelId = "gemini-4-hydrogen-xhigh"
-                cfg.agents[atlasIdx].fallbackModelIds = ["gemini-4-hydrogen-high", "google/gemini-4-hydrogen", "deepseek-v4.1-flash"]
-            }
+        // Ensure disabled Antigravity CLI backend cannot stay active under policy
+        for i in cfg.providers.indices where cfg.providers[i].kind == .antigravityCLI && cfg.providers[i].isEnabled {
+            cfg.providers[i].isEnabled = false
             didNormalize = true
         }
 
@@ -456,8 +429,7 @@ final class OfficeEngine: ObservableObject {
     @Published var securityAudit: SecurityAuditSnapshot = SecurityAuditSnapshot()
 
     let browser = BrowserAutomationService()
-    var searchedTopicsInTurn: Set<String> = []
-    var pendingResumeAfterHandoffPrompt: String? = nil
+    var searchedTopicsByAgent: [UUID: Set<String>] = [:]
 
     private var ambientTimer: Timer?
     var cronTimer: Timer?
@@ -479,8 +451,17 @@ final class OfficeEngine: ObservableObject {
     let persistConfig: Bool
 
     deinit {
-        ambientTimer?.invalidate()
-        cronTimer?.invalidate()
+        let aTimer = ambientTimer
+        let cTimer = cronTimer
+        if Thread.isMainThread {
+            aTimer?.invalidate()
+            cTimer?.invalidate()
+        } else if aTimer != nil || cTimer != nil {
+            DispatchQueue.main.async {
+                aTimer?.invalidate()
+                cTimer?.invalidate()
+            }
+        }
         pipelineTask?.cancel()
         for t in activeTasks.values {
             t.cancel()
@@ -533,20 +514,34 @@ final class OfficeEngine: ObservableObject {
         }
         self.selectedAgentId = self.agents.first?.id
 
-        // Auto-link agents to configured provider if currently unassigned or unconfigured
-        let activeAgy = self.providers.first(where: { $0.kind == .antigravityCLI && $0.isConfigured })
-        let activeEvren = self.providers.first(where: { $0.kind == .evren && $0.isConfigured })
-        let activeKilo = self.providers.first(where: { $0.kind == .kilo && $0.isConfigured })
-        let activeOpenRouter = self.providers.first(where: { $0.kind == .openRouter && $0.isConfigured })
-        if let defaultPrimary = activeAgy ?? activeEvren ?? activeKilo ?? activeOpenRouter {
+        // Auto-link/migrate agents assigned to removed/disabled/unconfigured providers onto healthy HTTP providers
+        let hasHealthyHttp = self.providers.contains { $0.kind != .antigravityCLI && $0.isEnabled && $0.isConfigured }
+        if hasHealthyHttp {
+            var didReassign = false
             for idx in self.agents.indices {
                 let currentP = self.provider(for: self.agents[idx].providerId)
-                if currentP == nil || !currentP!.isConfigured {
-                    self.agents[idx].providerId = defaultPrimary.id
-                    if !defaultPrimary.models.contains(self.agents[idx].modelId) {
-                        self.agents[idx].modelId = defaultPrimary.defaultModel.isEmpty ? (defaultPrimary.models.first ?? "") : defaultPrimary.defaultModel
-                    }
+                let needsMigration = currentP == nil || !currentP!.isEnabled || !currentP!.isConfigured || currentP!.kind == .antigravityCLI
+                if needsMigration {
+                    let decision = ModelRouter.selectModelForHire(
+                        name: self.agents[idx].name,
+                        title: self.agents[idx].title,
+                        systemPrompt: self.agents[idx].systemPrompt,
+                        requestedModel: "auto",
+                        providers: self.providers,
+                        existingAgents: self.agents.enumerated().filter { $0.offset != idx }.map(\.element),
+                        providerStatuses: self.providerStatuses,
+                        providerCooldowns: self.providerCooldowns,
+                        modelMetrics: self.modelMetrics
+                    )
+                    self.agents[idx].providerId = decision.provider.id
+                    self.agents[idx].modelId = decision.modelId
+                    self.agents[idx].fallbackModelIds = decision.fallbackModelIds
+                    self.agents[idx].agyConversationId = nil
+                    didReassign = true
                 }
+            }
+            if didReassign && persistConfig {
+                saveConfig()
             }
         }
 
@@ -758,10 +753,11 @@ final class OfficeEngine: ObservableObject {
         }
         let res = await OpenClawWorkspaceService.runGraphifyUpdate(workspacePath: standardized, force: !hasGraph)
         if res.succeeded {
+            let loadedSnap = OpenClawWorkspaceService.loadGraphifySnapshot(workspacePath: standardized)
             if URL(fileURLWithPath: workspacePath).standardizedFileURL.path == standardized {
-                graphSnapshot = OpenClawWorkspaceService.loadGraphifySnapshot(workspacePath: standardized)
+                graphSnapshot = loadedSnap
             }
-            let nodeCount = graphSnapshot?.nodes.count ?? 0
+            let nodeCount = loadedSnap?.nodes.count ?? 0
             log(.success, source: "Graphify", "📊 '\(projName)' bilgi grafı aktif (\(nodeCount > 0 ? "\(nodeCount) çekirdek düğüm" : "GRAPH_REPORT.md hazır")).")
         } else {
             log(.warning, source: "Graphify", "⚠️ '\(projName)' graf güncellemesi atlandı: \(res.output.prefix(120))")
@@ -809,6 +805,15 @@ final class OfficeEngine: ObservableObject {
             await withTaskGroup(of: (UUID, ProviderHealthStatus).self) { [weak self] group in
                 for p in snapshot {
                     group.addTask {
+                        if p.kind == .antigravityCLI {
+                            return (p.id, ProviderHealthStatus(
+                                providerId: p.id,
+                                isOnline: false,
+                                latencyMs: 0,
+                                lastChecked: Date(),
+                                statusMessage: "Devre dışı"
+                            ))
+                        }
                         let r = await LLMClient.shared.ping(provider: p)
                         return (p.id, ProviderHealthStatus(
                             providerId: p.id,
@@ -1502,6 +1507,22 @@ final class OfficeEngine: ObservableObject {
         activeWalkMotions.removeValue(forKey: id)
     }
 
+    private func cleanupRemovedAgentUI(id: UUID) {
+        clearWalkState(for: id)
+        agentFacingLeft.removeValue(forKey: id)
+        activeBeams.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
+        flyingPackets.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
+        searchedTopicsByAgent.removeValue(forKey: id)
+    }
+
+    private func appendFileEditRecord(_ record: FileEditRecord) {
+        fileEdits.insert(record, at: 0)
+        if fileEdits.count > 200 {
+            fileEdits.removeLast(fileEdits.count - 200)
+        }
+        workspaceRefreshNonce += 1
+    }
+
     func resetToSingleAgentOffice() {
         for task in activeTasks.values {
             task.cancel()
@@ -1513,9 +1534,9 @@ final class OfficeEngine: ObservableObject {
         activeWalkMotions.removeAll()
         agentFacingLeft.removeAll()
         flyingPackets.removeAll()
-        let agyId = providers.first(where: { $0.kind == .antigravityCLI && $0.isConfigured })?.id
-        let evrenId = providers.first(where: { $0.kind == .evren })?.id ?? (providers.first?.id ?? UUID())
-        agents = OfficeAgent.defaultAgents(antigravityId: agyId, evrenId: evrenId)
+        searchedTopicsByAgent.removeAll()
+        let evrenId = providers.first(where: { $0.kind == .evren })?.id ?? (providers.first(where: { $0.kind != .antigravityCLI })?.id ?? UUID())
+        agents = OfficeAgent.defaultAgents(antigravityId: nil, evrenId: evrenId)
         selectedAgentId = agents.first?.id
         officeDialogues.removeAll()
         activeBeams.removeAll()
@@ -1525,10 +1546,7 @@ final class OfficeEngine: ObservableObject {
 
     func deleteAgent(id: UUID) {
         cancelIndividualTask(for: id)
-        clearWalkState(for: id)
-        agentFacingLeft.removeValue(forKey: id)
-        activeBeams.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
-        flyingPackets.removeAll { $0.fromAgentId == id || $0.toAgentId == id }
+        cleanupRemovedAgentUI(id: id)
         agents.removeAll { $0.id == id }
         if selectedAgentId == id { selectedAgentId = agents.first?.id }
         saveConfig()
@@ -2063,13 +2081,29 @@ final class OfficeEngine: ObservableObject {
             agents[curIdx].statusBubble = "🤝 \(peer.name) bekleniyor..."
         }
 
-        let peerReply = await executeTurn(
-            agentId: peer.id,
-            prompt: "[\(callerName) EKİP GÖREVİ]\n\(subTask)",
-            zone: zone,
-            handoffDepth: handoffDepth + 1,
-            handoffChain: nextChain
-        )
+        let childToken = UUID()
+        activeTaskTokens[peer.id] = childToken
+        let childTask = Task { @MainActor [weak self] () -> String? in
+            guard let self else { return nil }
+            return await self.executeTurn(
+                agentId: peer.id,
+                prompt: "[\(callerName) EKİP GÖREVİ]\n\(subTask)",
+                zone: zone,
+                handoffDepth: handoffDepth + 1,
+                handoffChain: nextChain,
+                turnToken: childToken
+            )
+        }
+        activeTasks[peer.id] = Task { _ = await childTask.value }
+        let peerReply = await withTaskCancellationHandler {
+            await childTask.value
+        } onCancel: {
+            childTask.cancel()
+        }
+        if activeTaskTokens[peer.id] == childToken {
+            activeTasks.removeValue(forKey: peer.id)
+            activeTaskTokens.removeValue(forKey: peer.id)
+        }
         if Task.isCancelled {
             return (
                 "[Delegate İptal Edildi]: Görev kullanıcı tarafından durduruldu.",
@@ -2274,8 +2308,9 @@ final class OfficeEngine: ObservableObject {
             return
         }
 
-        if trimmed.lowercased().hasPrefix("/caveman") {
-            let arg = trimmed.lowercased().replacingOccurrences(of: "/caveman", with: "").trimmingCharacters(in: .whitespaces)
+        let lowerTrimmed = trimmed.lowercased()
+        if lowerTrimmed == "/caveman" || lowerTrimmed.hasPrefix("/caveman ") {
+            let arg = lowerTrimmed.dropFirst("/caveman".count).trimmingCharacters(in: .whitespaces)
             switch arg {
             case "off", "stop": cavemanMode = .off
             case "lite": cavemanMode = .lite
@@ -2291,7 +2326,7 @@ final class OfficeEngine: ObservableObject {
         let token = UUID()
         activeTaskTokens[agentId] = token
         activeTasks[agentId] = Task { @MainActor [weak self] in
-            _ = await self?.executeTurn(agentId: agentId, prompt: trimmed, zone: .desk, handoffDepth: 0)
+            _ = await self?.executeTurn(agentId: agentId, prompt: trimmed, zone: .desk, handoffDepth: 0, turnToken: token)
             if self?.activeTaskTokens[agentId] == token {
                 self?.activeTasks.removeValue(forKey: agentId)
                 self?.activeTaskTokens.removeValue(forKey: agentId)
@@ -2390,7 +2425,7 @@ final class OfficeEngine: ObservableObject {
     }
 
     @discardableResult
-    func executeTurn(agentId: UUID, prompt: String, zone: OfficeZone, handoffDepth: Int = 0, handoffChain: Set<UUID> = []) async -> String? {
+    func executeTurn(agentId: UUID, prompt: String, zone: OfficeZone, handoffDepth: Int = 0, handoffChain: Set<UUID> = [], turnToken: UUID? = nil) async -> String? {
         guard let initialIdx = agents.firstIndex(where: { $0.id == agentId }),
               let prov = provider(for: agents[initialIdx].providerId) else { return nil }
 
@@ -2416,8 +2451,16 @@ final class OfficeEngine: ObservableObject {
             return (aIdx, mIdx)
         }
 
+        let model = agents[initialIdx].modelId.isEmpty ? prov.defaultModel : agents[initialIdx].modelId
+        let initialConvId = (zone == .desk && prov.kind == .antigravityCLI) ? agents[initialIdx].agyConversationId : nil
+        let agentName = agents[initialIdx].name
+        let reqId = beginTrackedRequest(title: prompt, prompt: prompt, agentName: agentName, modelName: model)
+        advanceTrackedRequest(reqId, to: .analyzing, agentName: agentName, modelName: model)
+
         func resetCancelled() {
-            if let aIdx = agents.firstIndex(where: { $0.id == agentId }) {
+            advanceTrackedRequest(reqId, to: .done, agentName: agentName, modelName: model, failed: true)
+            let isCurrentTurn = (turnToken == nil) || (activeTaskTokens[agentId] == nil) || (activeTaskTokens[agentId] == turnToken)
+            if isCurrentTurn, let aIdx = agents.firstIndex(where: { $0.id == agentId }) {
                 withAnimation(.spring(response: 0.6, dampingFraction: 0.85)) {
                     agents[aIdx].status = .idle
                     agents[aIdx].statusBubble = "Durduruldu"
@@ -2431,12 +2474,6 @@ final class OfficeEngine: ObservableObject {
                 saveConfig()
             }
         }
-
-        let model = agents[initialIdx].modelId.isEmpty ? prov.defaultModel : agents[initialIdx].modelId
-        let initialConvId = (zone == .desk && prov.kind == .antigravityCLI) ? agents[initialIdx].agyConversationId : nil
-        let agentName = agents[initialIdx].name
-        let reqId = beginTrackedRequest(title: prompt, prompt: prompt, agentName: agentName, modelName: model)
-        advanceTrackedRequest(reqId, to: .analyzing, agentName: agentName, modelName: model)
 
         // Proactive in-place compaction for multi-hour sessions so persistent memory never truncates goals blindly
         let priorMessages = Array(agents[initialIdx].messages.dropLast(2))
@@ -2512,7 +2549,10 @@ final class OfficeEngine: ObservableObject {
             ? "> ⚡️ **Otomatik Devralma:** `\(prov.name) / \(model)` yerine `\(successfulProv.name) / \(res.resolvedModel)` görevi devraldı.\n\n"
             : ""
 
-        guard let startLoc = liveIndices() else { return res.content }
+        guard let startLoc = liveIndices() else {
+            advanceTrackedRequest(reqId, to: .done, agentName: agentName, modelName: res.resolvedModel, failed: true)
+            return res.content
+        }
         let initialClean = PowerShellTools.stripToolTags(from: res.content)
         let hasInitialTools = enableLocalTools && !PowerShellTools.extractToolCalls(from: res.content).isEmpty
         if !initialClean.isEmpty {
@@ -2539,10 +2579,8 @@ final class OfficeEngine: ObservableObject {
             let wsPrefix = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
             for full in res.touchedFiles {
                 let rel = full.hasPrefix(wsPrefix) ? String(full.dropFirst(wsPrefix.count)) : full
-                fileEdits.insert(FileEditRecord(agentName: agentName, relativePath: rel, backupPath: "", wasNewFile: false, summary: "Antigravity CLI düzenlemesi"), at: 0)
+                appendFileEditRecord(FileEditRecord(agentName: agentName, relativePath: rel, backupPath: "", wasNewFile: false, summary: "Araç düzenlemesi"))
             }
-            if fileEdits.count > 200 { fileEdits.removeLast(fileEdits.count - 200) }
-            workspaceRefreshNonce += 1
         }
         if agents[startLoc.ai].currentZone == .serverRack && zone != .meetingRoom {
             withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
@@ -2553,13 +2591,13 @@ final class OfficeEngine: ObservableObject {
 
         // Continuous Multi-Step Autonomous ReAct Loop (extended for multi-hour collaboration: 48 lead / 24 sub-delegate)
         let maxIterations = handoffDepth == 0 ? 48 : 24
-         
-         // Continuity Hook: Initialize Persistent Sprint Tracking
-         let sprintSessionId = UUID()
-         log(.info, source: agentName, "🚀 Long-Running Sprint Initialized. ID: \(sprintSessionId), Limit: \(maxIterations)")
         let maxAutoContinues = handoffDepth == 0 ? 8 : 0
         var activeModelName = res.resolvedModel
         var totalLatencyMs = res.latencyMs
+        var totalInputTokens = res.inputTokens
+        var totalOutputTokens = res.outputTokens
+        var totalCachedTokens = res.cachedTokens
+        var totalReasoningTokens = res.reasoningTokens
         var turnAgyConversationId = successfulProv.kind == .antigravityCLI ? res.agyConversationId : nil
         var didStepFail = false
         var didRequestHumanHandoff = false
@@ -2567,7 +2605,7 @@ final class OfficeEngine: ObservableObject {
         var didRunBuildOrTestInTurn = res.toolCalls.contains { Self.isBuildOrTestCommand("\($0.name) \($0.argument)") }
         var buildGateCycles = 0
         if handoffDepth == 0 {
-            searchedTopicsInTurn.removeAll()
+            searchedTopicsByAgent[agentId] = []
         }
 
         if enableLocalTools {
@@ -2622,6 +2660,10 @@ final class OfficeEngine: ObservableObject {
                     }
                 }
                 totalLatencyMs += nextStep.latencyMs
+                totalInputTokens += nextStep.inputTokens
+                totalOutputTokens += nextStep.outputTokens
+                totalCachedTokens += nextStep.cachedTokens
+                totalReasoningTokens += nextStep.reasoningTokens
                 if !nextStep.toolCalls.isEmpty {
                     allRecordedToolCalls.append(contentsOf: nextStep.toolCalls)
                     if nextStep.toolCalls.contains(where: { Self.isBuildOrTestCommand("\($0.name) \($0.argument)") && $0.succeeded }) {
@@ -2634,9 +2676,8 @@ final class OfficeEngine: ObservableObject {
                     let wsPrefix = workspacePath.hasSuffix("/") ? workspacePath : workspacePath + "/"
                     for full in nextStep.touchedFiles {
                         let rel = full.hasPrefix(wsPrefix) ? String(full.dropFirst(wsPrefix.count)) : full
-                        fileEdits.insert(FileEditRecord(agentName: agentName, relativePath: rel, backupPath: "", wasNewFile: false, summary: "Antigravity CLI düzenlemesi"), at: 0)
+                        appendFileEditRecord(FileEditRecord(agentName: agentName, relativePath: rel, backupPath: "", wasNewFile: false, summary: "Araç düzenlemesi"))
                     }
-                    workspaceRefreshNonce += 1
                 }
                 currentContent = nextStep.content
                 currentHistory.append(ChatMessage(role: "assistant", content: nextStep.content))
@@ -2802,11 +2843,6 @@ final class OfficeEngine: ObservableObject {
                 iterationCount += 1
                 var iterationOutputs: [String] = []
 
-                let localReadOnlyToolSet: Set<String> = [
-                    "list_dir", "find_files", "read_file", "search_code",
-                    "git_status", "git_diff", "system_info", "graphify_query", "graphify_path"
-                ]
-
                 func checkDuplicateAndTrack(_ call: ParsedToolCall) -> String? {
                     let callSig = "\(call.name)::\(call.argument)"
                     if callSig == lastToolSignature {
@@ -2831,8 +2867,12 @@ final class OfficeEngine: ObservableObject {
                     return nil
                 }
 
-                // Execute pure read-only batches concurrently (Antigravity / Claude Code parallel read pattern)
-                let allPureLocalReads = calls.count > 1 && calls.allSatisfy { localReadOnlyToolSet.contains(PowerShellTools.canonicalToolName($0.name).lowercased()) }
+                // Execute pure read-only batches concurrently using unified PowerShellTools.isReadOnlyToolName
+                let engineHandledReadOnly: Set<String> = ["list_agents", "list_connectors", "swarm_status"]
+                let allPureLocalReads = calls.count > 1 && calls.allSatisfy {
+                    let cname = PowerShellTools.canonicalToolName($0.name).lowercased()
+                    return PowerShellTools.isReadOnlyToolName(cname) && !engineHandledReadOnly.contains(cname)
+                }
                 if allPureLocalReads {
                     var uniqueCalls: [(Int, ParsedToolCall)] = []
                     var blockedIndices: [Int: String] = [:]
@@ -2873,6 +2913,10 @@ final class OfficeEngine: ObservableObject {
                             map[idx] = res
                         }
                         return map
+                    }
+                    if Task.isCancelled {
+                        resetCancelled()
+                        return nil
                     }
                     for (idx, call) in calls.enumerated() {
                         if let loopMsg = blockedIndices[idx] {
@@ -3018,6 +3062,7 @@ final class OfficeEngine: ObservableObject {
                                 allRecordedToolCalls.append(ToolCallRecord(name: "dismiss_agent", argument: targetName, output: msg, succeeded: false))
                             } else {
                                 cancelIndividualTask(for: dismissedAgent.id)
+                                cleanupRemovedAgentUI(id: dismissedAgent.id)
                                 agents.removeAll { $0.id == dismissedAgent.id }
                                 if selectedAgentId == dismissedAgent.id { selectedAgentId = agentId }
                                 saveConfig()
@@ -3071,8 +3116,7 @@ final class OfficeEngine: ObservableObject {
                             allowWrites: allowFileWrites
                         )
                         if let editRec = toolRes.editRecord {
-                            fileEdits.insert(editRec, at: 0)
-                            workspaceRefreshNonce += 1
+                            appendFileEditRecord(editRec)
                             didEditCodeInTurn = true
                             didRunBuildOrTestInTurn = false
                             saveConfig()
@@ -3181,7 +3225,12 @@ final class OfficeEngine: ObservableObject {
             return nil
         }
 
+        if handoffDepth == 0 {
+            searchedTopicsByAgent.removeValue(forKey: agentId)
+        }
+
         if didStepFail {
+            advanceTrackedRequest(reqId, to: .done, agentName: agentName, modelName: activeModelName, failed: true)
             if let aiErr = agents.firstIndex(where: { $0.id == agentId }) {
                 agents[aiErr].status = .error
                 agents[aiErr].statusBubble = "Adım Hatası"
@@ -3190,45 +3239,58 @@ final class OfficeEngine: ObservableObject {
             return nil
         }
 
-        if let aiFinal = agents.firstIndex(where: { $0.id == agentId }) {
-            let finalMsg = agents[aiFinal].messages.first(where: { $0.id == replyId })
-            let finalToolsCount = finalMsg?.toolCalls.count ?? res.toolCalls.count
-            agents[aiFinal].completedTasks += 1
-            agents[aiFinal].status = .idle
-            agents[aiFinal].statusBubble = didRequestHumanHandoff
-                ? "🧑💻 Browser onayı bekliyor"
-                : "Tamamlandı (\(totalLatencyMs) ms)"
-            recordTurnCostTelemetry(
-                agentId: agentId,
-                provider: successfulProv,
-                modelId: activeModelName,
-                response: res,
-                promptChars: prompt.count,
-                toolCallsCount: finalToolsCount
-            )
-            advanceTrackedRequest(
-                reqId,
-                to: .done,
-                agentName: agentName,
-                modelName: activeModelName,
-                latencyMs: max(0, totalLatencyMs - res.latencyMs)
-            )
-            saveConfig()
-            if persistConfig && handoffDepth == 0 && didEditCodeInTurn {
-                let targetWS = workspacePath
-                Task { @MainActor [weak self] in
-                    await self?.scheduleGraphifyAutoIndexIfNeeded(for: targetWS, incremental: true)
-                }
-            }
-            log(.success, source: agentName, "Tamamlandı (\(activeModelName) · \(totalLatencyMs) ms)")
-            let replyContent = finalMsg?.content ?? res.content
-            if telegramNotifyEnabled && handoffDepth == 0 && !telegramChatId.isEmpty {
-                let preview = String(replyContent.replacingOccurrences(of: "\n", with: " ").prefix(280))
-                Task { await sendTelegramNotification(text: "✅ Crims Office · \(agentName) (\(activeModelName)):\n\(preview)") }
-            }
-            return replyContent
+        guard let aiFinal = agents.firstIndex(where: { $0.id == agentId }) else {
+            advanceTrackedRequest(reqId, to: .done, agentName: agentName, modelName: activeModelName, failed: true)
+            return res.content
         }
-        return res.content
+        let finalMsg = agents[aiFinal].messages.first(where: { $0.id == replyId })
+        let finalToolsCount = finalMsg?.toolCalls.count ?? res.toolCalls.count
+        agents[aiFinal].completedTasks += 1
+        agents[aiFinal].status = .idle
+        agents[aiFinal].statusBubble = didRequestHumanHandoff
+            ? "🧑💻 Browser onayı bekliyor"
+            : "Tamamlandı (\(totalLatencyMs) ms)"
+        let aggregatedResponse = LLMFinalResponse(
+            content: finalMsg?.content ?? res.content,
+            reasoning: finalMsg?.reasoning ?? res.reasoning,
+            resolvedModel: activeModelName,
+            latencyMs: totalLatencyMs,
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            cachedTokens: totalCachedTokens,
+            reasoningTokens: totalReasoningTokens
+        )
+        recordTurnCostTelemetry(
+            agentId: agentId,
+            provider: successfulProv,
+            modelId: activeModelName,
+            response: aggregatedResponse,
+            promptChars: prompt.count,
+            toolCallsCount: finalToolsCount
+        )
+        advanceTrackedRequest(
+            reqId,
+            to: .done,
+            agentName: agentName,
+            modelName: activeModelName,
+            inputTokens: max(0, totalInputTokens - res.inputTokens),
+            outputTokens: max(0, totalOutputTokens - res.outputTokens),
+            latencyMs: max(0, totalLatencyMs - res.latencyMs)
+        )
+        saveConfig()
+        if persistConfig && handoffDepth == 0 && didEditCodeInTurn {
+            let targetWS = workspacePath
+            Task { @MainActor [weak self] in
+                await self?.scheduleGraphifyAutoIndexIfNeeded(for: targetWS, incremental: true)
+            }
+        }
+        log(.success, source: agentName, "Tamamlandı (\(activeModelName) · \(totalLatencyMs) ms)")
+        let replyContent = finalMsg?.content ?? res.content
+        if telegramNotifyEnabled && handoffDepth == 0 && !telegramChatId.isEmpty {
+            let preview = String(replyContent.replacingOccurrences(of: "\n", with: " ").prefix(280))
+            Task { await sendTelegramNotification(text: "✅ Crims Office · \(agentName) (\(activeModelName)):\n\(preview)") }
+        }
+        return replyContent
     }
 
     // MARK: - Multi-Agent Orchestrator (Live Debate, Autonomous Project Sprint + Build Self-Heal, Sequential, Parallel)
@@ -3773,11 +3835,22 @@ final class OfficeEngine: ObservableObject {
 
     func recordSwarmsTelemetry(_ telemetry: SwarmsRunTelemetry?) {
         guard let telemetry else { return }
+        func resolveProvider(kind: String, name: String) -> APIProviderConfig? {
+            providers.first(where: { !$0.name.isEmpty && $0.name == name && $0.kind.rawValue == kind })
+                ?? providers.first(where: { !$0.name.isEmpty && $0.name == name })
+                ?? providers.first(where: { $0.kind.rawValue == kind })
+        }
+        var fatalProviderIds: Set<UUID> = []
+        for used in telemetry.usedRoutes {
+            guard let prov = resolveProvider(kind: used.providerKind, name: used.providerName) else { continue }
+            recordModelSuccess(providerId: prov.id, modelId: used.modelName, latencyMs: 1200)
+        }
         for fail in telemetry.failedCandidates {
-            guard let prov = providers.first(where: { $0.kind.rawValue == fail.providerKind || $0.name == fail.providerName }) else { continue }
+            guard let prov = resolveProvider(kind: fail.providerKind, name: fail.providerName) else { continue }
             if fail.isProviderFatal || Self.isFatalAuthOrNetworkMessage(fail.error) {
+                fatalProviderIds.insert(prov.id)
                 markProviderCooldown(prov.id, seconds: 300)
-            } else {
+            } else if !fatalProviderIds.contains(prov.id) {
                 markModelCooldown(
                     providerId: prov.id,
                     modelId: fail.modelName,
@@ -3785,10 +3858,6 @@ final class OfficeEngine: ObservableObject {
                     isRateLimit: Self.isRateLimitErrorMessage(fail.error)
                 )
             }
-        }
-        for used in telemetry.usedRoutes {
-            guard let prov = providers.first(where: { $0.kind.rawValue == used.providerKind || $0.name == used.providerName }) else { continue }
-            recordModelSuccess(providerId: prov.id, modelId: used.modelName, latencyMs: 1200)
         }
     }
 

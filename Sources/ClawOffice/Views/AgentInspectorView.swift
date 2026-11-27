@@ -301,6 +301,7 @@ struct ChatMessageBubbleView: View {
     @State private var isExpanded = false
     @State private var showToolCalls = false
     @State private var showReasoning = false
+    @State private var copiedJustNow = false
 
     private var isSummary: Bool {
         ContextCompactor.isSummaryMessage(msg)
@@ -315,7 +316,7 @@ struct ChatMessageBubbleView: View {
             if isStreamingLast { return "⚡️ *Araç adımı hazırlanıyor...*" }
             return msg.toolCalls.isEmpty ? msg.content : "⚡️ *Araç adımları tamamlandı.*"
         }()
-        let isLongMessage = ChatDisplayCompactor.isLong(rawDisplay)
+        let isLongMessage = !isStreamingLast && ChatDisplayCompactor.isLong(rawDisplay)
         let displayText = (isLongMessage && !isExpanded)
             ? ChatDisplayCompactor.collapsedPreview(for: rawDisplay)
             : rawDisplay
@@ -378,15 +379,17 @@ struct ChatMessageBubbleView: View {
                         }
                         Button {
                             NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(msg.content, forType: .string)
+                            NSPasteboard.general.setString(clean.isEmpty ? rawDisplay : clean, forType: .string)
+                            copiedJustNow = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { copiedJustNow = false }
                         } label: {
                             HStack(spacing: 2) {
-                                Image(systemName: "doc.on.doc").font(.system(size: 8.5))
-                                Text("Kopyala").font(.system(size: 9))
+                                Image(systemName: copiedJustNow ? "checkmark" : "doc.on.doc").font(.system(size: 8.5))
+                                Text(copiedJustNow ? "Kopyalandı" : "Kopyala").font(.system(size: 9))
                             }
                         }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(copiedJustNow ? .green : .secondary)
                     }
                 }
             }
@@ -493,28 +496,17 @@ struct ChatMessageBubbleView: View {
 
     @ViewBuilder
     private func messageBubbleContent(displayText: String, isLongMessage: Bool, metaLabel: String) -> some View {
+        let isUser = msg.role == "user"
         let bodyContent = VStack(alignment: .leading, spacing: 5) {
-            if isExpanded && isLongMessage {
-                ScrollView {
-                    MarkdownMessageView(
-                        text: displayText,
-                        baseFontSize: 12.5,
-                        compact: true,
-                        textColor: msg.role == "user" ? Color.white : Color.primary
-                    )
-                    .textSelection(.enabled)
-                    .frame(maxWidth: msg.role == "user" ? nil : .infinity, alignment: msg.role == "user" ? .trailing : .leading)
-                }
-                .frame(maxHeight: 280)
-            } else {
-                MarkdownMessageView(
-                    text: displayText,
-                    baseFontSize: 12.5,
-                    compact: true,
-                    textColor: msg.role == "user" ? Color.white : Color.primary
-                )
-                .textSelection(.enabled)
-            }
+            MarkdownMessageView(
+                text: displayText,
+                baseFontSize: 12.5,
+                compact: true,
+                textColor: isUser ? Color.white : Color.primary
+            )
+            .tint(isUser ? Color.white : Color.accentColor)
+            .textSelection(.enabled)
+            .frame(maxWidth: isUser ? nil : .infinity, alignment: .leading)
 
             if isLongMessage {
                 Button {
@@ -607,19 +599,23 @@ struct AgentInspectorView: View {
                     } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
                         .buttonStyle(.borderless)
                         .disabled(agent.messages.isEmpty)
+                        .accessibilityLabel("Tüm mesajları daralt")
                         .help("Tüm açık mesaj ve araç çıktılarını daralt")
                     Button {
                         _ = engine.compactAgentHistory(for: agent.id, force: true)
                     } label: { Image(systemName: "rectangle.compress.vertical") }
                         .buttonStyle(.borderless)
                         .disabled(agent.messages.count < 4 || agent.status.isBusy)
+                        .accessibilityLabel("Sohbet geçmişini özetle")
                         .help("Sohbet geçmişini akıllıca özetle (Auto-Compact)")
                     Button { editingAgent = agent } label: { Image(systemName: "slider.horizontal.3") }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Ajan ayarlarını düzenle")
                         .help("Ajan ayarlarını ve sistem promptunu düzenle")
                     Button { clearConfirmAgentId = agent.id } label: { Image(systemName: "trash") }
                         .buttonStyle(.borderless)
                         .disabled(agent.messages.isEmpty && !agent.status.isBusy)
+                        .accessibilityLabel("Sohbet geçmişini temizle")
                         .help("Sohbet geçmişini temizle")
                 }
                 .padding(12).background(.bar)
@@ -680,13 +676,40 @@ struct AgentInspectorView: View {
                 Divider()
 
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 8) {
-                            ForEach(agent.messages) { msg in
-                                ChatMessageBubbleView(msg: msg, agent: agent, collapseEpoch: collapseEpoch)
-                                    .id(msg.id)
+                    ZStack(alignment: .bottomTrailing) {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 8) {
+                                ForEach(agent.messages) { msg in
+                                    ChatMessageBubbleView(msg: msg, agent: agent, collapseEpoch: collapseEpoch)
+                                        .id(msg.id)
+                                }
+                            }.padding(10)
+                        }
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 2)
+                                .onChanged { value in
+                                    if value.translation.height > 6 {
+                                        autoFollowBottom = false
+                                    }
+                                }
+                        )
+                        if !autoFollowBottom && !agent.messages.isEmpty {
+                            Button {
+                                autoFollowBottom = true
+                                if let last = agent.messages.last?.id {
+                                    withAnimation(.easeOut(duration: 0.2)) {
+                                        proxy.scrollTo(last, anchor: .bottom)
+                                    }
+                                }
+                            } label: {
+                                Label("Sona Git", systemImage: "arrow.down.circle.fill")
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 10).padding(.vertical, 5)
+                                    .liquidGlassCapsule(tint: .accentColor, interactive: true)
                             }
-                        }.padding(10)
+                            .buttonStyle(.plain)
+                            .padding(10)
+                        }
                     }
                     .onChange(of: agent.messages.count) { _, _ in
                         if autoFollowBottom, let last = agent.messages.last?.id {
@@ -696,7 +719,7 @@ struct AgentInspectorView: View {
                     .task(id: "\(agent.id.uuidString)-\(agent.messages.last?.content.count ?? 0)") {
                         guard autoFollowBottom, agent.status.isBusy else { return }
                         try? await Task.sleep(nanoseconds: 140_000_000)
-                        guard !Task.isCancelled else { return }
+                        guard !Task.isCancelled, autoFollowBottom else { return }
                         if let last = agent.messages.last?.id {
                             proxy.scrollTo(last, anchor: .bottom)
                         }
@@ -808,6 +831,8 @@ struct AgentEditSheet: View {
                                         .frame(width: 15, height: 15)
                                         .overlay(Circle().stroke(Color.white, lineWidth: draft.accentHex == cHex ? 2 : 0))
                                         .scaleEffect(draft.accentHex == cHex ? 1.15 : 1.0)
+                                        .accessibilityLabel("Tema rengi \(cHex)")
+                                        .accessibilityAddTraits(draft.accentHex == cHex ? [.isButton, .isSelected] : [.isButton])
                                         .onTapGesture { draft.accentHex = cHex }
                                 }
                             }
@@ -916,7 +941,10 @@ struct AgentEditSheet: View {
                         merged.name = draft.name
                         merged.title = draft.title
                         merged.accentHex = draft.accentHex
-                        merged.providerId = draft.providerId
+                        let resolvedProvId = engine.providers.contains(where: { $0.id == draft.providerId })
+                            ? draft.providerId
+                            : (engine.providers.first(where: { $0.isConfigured })?.id ?? engine.providers.first?.id ?? draft.providerId)
+                        merged.providerId = resolvedProvId
                         merged.modelId = draft.modelId
                         merged.temperature = draft.temperature
                         merged.systemPrompt = draft.systemPrompt
@@ -932,6 +960,12 @@ struct AgentEditSheet: View {
                 }
             }
             .padding(22)
+        }
+        .onAppear {
+            if !engine.providers.contains(where: { $0.id == draft.providerId }),
+               let firstValid = engine.providers.first(where: { $0.isConfigured }) ?? engine.providers.first {
+                draft.providerId = firstValid.id
+            }
         }
         .frame(minWidth: 530, minHeight: 500, idealHeight: 580)
         .confirmationDialog("'\(draft.name)' Ekipten Silinsin mi?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {

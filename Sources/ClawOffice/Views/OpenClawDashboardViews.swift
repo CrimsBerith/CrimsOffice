@@ -198,7 +198,7 @@ struct OpenClawControlCenterView: View {
 
     private var overviewTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), spacing: 10)], spacing: 10) {
                 kpiBox(
                     title: "OpenClaw Gateway",
                     value: engine.openClawGatewaySnap.gatewayOnline ? "Çevrimiçi" : (engine.openClawGatewaySnap.cliInstalled ? "CLI Hazır" : "Beklemede"),
@@ -273,7 +273,7 @@ struct OpenClawControlCenterView: View {
 
     private var costTab: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 185), spacing: 10)], spacing: 10) {
                 kpiBox(
                     title: "Tahmini Tasarruf",
                     value: String(format: "$%.2f", engine.totalEstimatedSavingsUSD),
@@ -332,6 +332,11 @@ struct OpenClawControlCenterView: View {
                                     .resizable().aspectRatio(contentMode: .fill)
                                     .scaleEffect(2.05, anchor: .top).offset(y: 4)
                                     .frame(width: 34, height: 34).clipShape(Circle())
+                            } else {
+                                Circle()
+                                    .fill(Color(hex: row.accentHex).opacity(0.25))
+                                    .frame(width: 34, height: 34)
+                                    .overlay(Text(row.name.prefix(1)).font(.caption.bold()))
                             }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(row.name).font(.callout.bold())
@@ -471,7 +476,10 @@ struct OpenClawControlCenterView: View {
                 HStack(spacing: 8) {
                     TextField("Test mesajı...", text: $telegramTestInput).textFieldStyle(.roundedBorder)
                     Button("Test Mesajı Gönder") {
-                        engine.telegramBotToken = telegramTokenDraft
+                        let cleanDraft = telegramTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !cleanDraft.isEmpty {
+                            engine.telegramBotToken = cleanDraft
+                        }
                         Task {
                             let res = await engine.sendTelegramNotification(text: telegramTestInput)
                             telegramFeedback = res.1
@@ -513,12 +521,15 @@ struct OpenClawControlCenterView: View {
                 HStack(spacing: 8) {
                     TextField("Zamanlanacak otonom görev promptu...", text: $cronPrompt).textFieldStyle(.roundedBorder)
                     Button("Cron Ekle") {
-                        engine.addCronJob(name: cronName, prompt: cronPrompt, targetAgentName: cronAgent, intervalMinutes: cronMinutes)
+                        let validAgent = engine.agents.contains(where: { $0.name == cronAgent })
+                            ? cronAgent
+                            : (engine.agents.first?.name ?? "Atlas")
+                        engine.addCronJob(name: cronName, prompt: cronPrompt, targetAgentName: validAgent, intervalMinutes: cronMinutes)
                         cronName = ""
                         cronPrompt = ""
                     }
                     .liquidGlassButton(prominent: true, tint: .teal)
-                    .disabled(cronName.trimmingCharacters(in: .whitespaces).isEmpty || cronPrompt.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(cronName.trimmingCharacters(in: .whitespaces).isEmpty || cronPrompt.trimmingCharacters(in: .whitespaces).isEmpty || engine.agents.isEmpty)
                 }
 
                 ForEach(engine.cronJobs) { job in
@@ -526,7 +537,11 @@ struct OpenClawControlCenterView: View {
                         Toggle("", isOn: Binding(
                             get: { job.isEnabled },
                             set: { _ in engine.toggleCronJob(id: job.id) }
-                        )).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .accessibilityLabel("\(job.name) cron işini aç/kapat")
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(job.name) · @\(job.targetAgentName) · her \(job.intervalMinutes) dk").font(.callout.bold())
                             Text("\(job.prompt) — \(job.lastStatus)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -664,22 +679,35 @@ struct OpenClawControlCenterView: View {
                     }
                 }
             } else if selectedDbTable == "swarms" {
-                ForEach(engine.swarmsRecentRuns) { run in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(run.swarmType) · \(run.status)").font(.callout.bold())
-                            Text(run.taskPreview).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                if engine.swarmsRecentRuns.isEmpty {
+                    Text("Henüz Swarms çalışma kaydı bulunmuyor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                } else {
+                    ForEach(engine.swarmsRecentRuns) { run in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(run.swarmType) · \(run.status)").font(.callout.bold())
+                                Text(run.taskPreview).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            Text("\(run.stepCount) adım · \(run.durationMs) ms")
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        Text("\(run.stepCount) adım · \(run.durationMs) ms")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(.secondary)
+                        .padding(10)
+                        .liquidGlassCard(cornerRadius: 12)
                     }
-                    .padding(10)
-                    .liquidGlassCard(cornerRadius: 12)
                 }
             } else {
-                ForEach(engine.fileEdits.prefix(40)) { rec in
+                if engine.fileEdits.isEmpty {
+                    Text("Henüz kaydedilmiş dosya düzenlemesi bulunmuyor.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                } else {
+                    ForEach(engine.fileEdits.prefix(40)) { rec in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(rec.relativePath).font(.system(.caption, design: .monospaced).bold())
@@ -693,6 +721,7 @@ struct OpenClawControlCenterView: View {
                     }
                     .padding(10)
                     .liquidGlassCard(cornerRadius: 12)
+                    }
                 }
             }
         }

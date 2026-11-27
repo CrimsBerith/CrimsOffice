@@ -414,6 +414,12 @@ final class OpenClawGatewayService: @unchecked Sendable {
     private func receiveLoop(over task: URLSessionWebSocketTask) {
         task.receive { [weak self] result in
             guard let self else { return }
+            self.lock.lock()
+            let isCurrent = (self.wsTask === task)
+            let handler = self.onGatewayEvent
+            self.lock.unlock()
+            guard isCurrent else { return }
+
             switch result {
             case .success(let msg):
                 if case .string(let text) = msg {
@@ -424,9 +430,6 @@ final class OpenClawGatewayService: @unchecked Sendable {
                        let nonce = payload["nonce"] as? String {
                         self.sendConnectHandshake(over: task, nonce: nonce)
                     } else {
-                        self.lock.lock()
-                        let handler = self.onGatewayEvent
-                        self.lock.unlock()
                         handler?(text)
                     }
                 }
@@ -545,16 +548,28 @@ final class OpenClawGatewayService: @unchecked Sendable {
             openClawPermsOK = (posix & 0o077) == 0
         }
 
-        let keychainCount = providers.filter { $0.kind != .antigravityCLI && !$0.apiKey.isEmpty }.count
-            + connectors.filter { !$0.apiKey.isEmpty }.count
+        let persistedProviderKeys = providers.filter {
+            $0.kind != .antigravityCLI && KeychainStore.shared.secret(forAccount: $0.id.uuidString) != nil
+        }.count
+        let persistedConnectorKeys = connectors.filter {
+            KeychainStore.shared.secret(forAccount: $0.keychainAccountKey) != nil
+        }.count
+        let keychainCount = persistedProviderKeys + persistedConnectorKeys
+        let unmigratedPlaintextCount = providers.filter {
+            $0.kind != .antigravityCLI && !$0.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && KeychainStore.shared.secret(forAccount: $0.id.uuidString) == nil
+        }.count + connectors.filter {
+            !$0.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && KeychainStore.shared.secret(forAccount: $0.keychainAccountKey) == nil
+        }.count
         let swarmsActive = ports.first(where: { $0.port == swarmsPort })?.isListening ?? false
 
         let findings: [SecurityFindingItem] = [
             SecurityFindingItem(
                 title: "Keychain API Anahtarı İzolasyonu",
-                passed: true,
+                passed: unmigratedPlaintextCount == 0,
                 severity: "Yüksek",
-                detail: "\(keychainCount) gizli anahtar düz metin JSON yerine macOS Keychain içinde korunuyor."
+                detail: unmigratedPlaintextCount == 0
+                    ? "\(keychainCount) gizli anahtar düz metin JSON yerine macOS Keychain içinde korunuyor."
+                    : "\(unmigratedPlaintextCount) anahtar henüz Keychain yerine bellekte/düz metinde kalmış olabilir."
             ),
             SecurityFindingItem(
                 title: "~/.openclaw/openclaw.json Dosya İzinleri (0600)",
@@ -593,7 +608,8 @@ final class OpenClawGatewayService: @unchecked Sendable {
     }
 
     private static func probeLocalTCPPort(_ port: Int) async -> Bool {
-        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return false }
+        guard let validPort = UInt16(exactly: port), validPort > 0,
+              let nwPort = NWEndpoint.Port(rawValue: validPort) else { return false }
         final class ProbeState: @unchecked Sendable {
             private let lock = NSLock()
             private var done = false

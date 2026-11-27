@@ -194,6 +194,16 @@ class RuntimeLoadTracker:
                 self._provider_cooldowns[pk] = now + 300.0
             elif p_err >= 2:
                 self._provider_cooldowns[pk] = now + 45.0
+            if len(self._model_errors) > 512:
+                expired_m = [k for k, t in self._model_cooldowns.items() if t <= now]
+                for k in expired_m[:128]:
+                    self._model_cooldowns.pop(k, None)
+                    self._model_errors.pop(k, None)
+            if len(self._provider_errors) > 128:
+                expired_p = [k for k, t in self._provider_cooldowns.items() if t <= now]
+                for k in expired_p[:32]:
+                    self._provider_cooldowns.pop(k, None)
+                    self._provider_errors.pop(k, None)
         return is_fatal
 
     def is_cooled(self, prov: ProviderSpec, model: str) -> bool:
@@ -437,18 +447,23 @@ class RunState:
     cancelled: bool = False
     telemetry: Optional[SwarmTelemetryCollector] = None
 
+    def __post_init__(self) -> None:
+        import threading
+        self._lock = threading.Lock()
+
     def to_summary(self) -> Dict[str, Any]:
-        return {
-            "run_id": self.run_id,
-            "swarm_type": self.swarm_type,
-            "task_preview": self.task_preview,
-            "agent_names": self.agent_names,
-            "status": self.status,
-            "duration_ms": self.duration_ms,
-            "step_count": len(self.steps),
-            "output_preview": self.final_output[:260],
-            "error": self.error,
-        }
+        with self._lock:
+            return {
+                "run_id": self.run_id,
+                "swarm_type": self.swarm_type,
+                "task_preview": self.task_preview,
+                "agent_names": list(self.agent_names),
+                "status": self.status,
+                "duration_ms": self.duration_ms,
+                "step_count": len(self.steps),
+                "output_preview": self.final_output[:260],
+                "error": self.error,
+            }
 
 
 ACTIVE_RUNS: Dict[str, RunState] = {}
@@ -493,6 +508,7 @@ class AntigravityCLILLM:
         cwd: Optional[str] = None,
         allow_local_edits: bool = False,
         timeout_seconds: int = 180,
+        cancel_check: Optional[Any] = None,
     ) -> None:
         self.model_name = model_name or "gemini-4-hydrogen-xhigh"
         self.system_prompt = system_prompt or ""
@@ -500,6 +516,7 @@ class AntigravityCLILLM:
         self.cwd = cwd if (cwd and os.path.isdir(cwd)) else str(WORKSPACE_DIR)
         self.allow_local_edits = allow_local_edits
         self.timeout_seconds = timeout_seconds
+        self.cancel_check = cancel_check
         self.usage: Dict[str, int] = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -561,17 +578,34 @@ class AntigravityCLILLM:
         ]
         existing_path = env.get("PATH", "")
         env["PATH"] = ":".join(extra_paths + ([existing_path] if existing_path else []))
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             args,
             cwd=self.cwd,
             env=env,
             stdin=subprocess.DEVNULL,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=self.timeout_seconds,
-            check=False,
         )
-        stdout = (proc.stdout or "").strip()
+        deadline = time.time() + float(max(5, self.timeout_seconds))
+        while proc.poll() is None:
+            if self.cancel_check and self.cancel_check():
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1.5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise SwarmCancelledError("Swarm görevi kullanıcı tarafından iptal edildi.")
+            if time.time() >= deadline:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1.5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                raise TimeoutError(f"Antigravity CLI zaman aşımı ({self.timeout_seconds}s)")
+            time.sleep(0.1)
+        out_str, err_str = proc.communicate()
+        stdout = (out_str or "").strip()
         if stdout:
             for line in reversed(stdout.splitlines()):
                 line = line.strip()
@@ -868,6 +902,7 @@ class ResilientSwarmsLLM:
                                 cwd=self.workspace_path,
                                 allow_local_edits=self.allow_local_edits,
                                 timeout_seconds=max(90, self.timeout_seconds),
+                                cancel_check=self.cancel_check,
                             )
                             out = _strip_think_tags(cli.run(task=task, messages=messages))
                             if not out:
@@ -1133,9 +1168,10 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
         return router.run(req.task)
 
     raw_result: Any = None
+    step_agents: List[Agent] = list(swarms_agents)
 
     if effective_type == "HierarchicalSwarm":
-        director_spec = req.director or req.agents[0]
+        director_spec = _with_req_retry(req.director or req.agents[0])
         director_agent = build_swarms_agent(
             director_spec,
             workspace_path=req.workspace_path,
@@ -1143,6 +1179,7 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
             telemetry=telemetry,
             cancel_check=cancel_check,
         )
+        step_agents.append(director_agent)
         workers = swarms_agents[1:] if (req.director is None and len(swarms_agents) > 1) else swarms_agents
         try:
             swarm = HierarchicalSwarm(
@@ -1175,7 +1212,7 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
             pro, con, judge = swarms_agents[0], swarms_agents[1], swarms_agents[2]
         else:
             pro, con = swarms_agents[0], swarms_agents[1]
-            judge_spec = req.director or req.agents[0]
+            judge_spec = _with_req_retry(req.director or req.agents[0])
             judge = _make_clone_judge(
                 judge_spec,
                 "Hakem",
@@ -1185,6 +1222,7 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
                 telemetry=telemetry,
                 cancel_check=cancel_check,
             )
+            step_agents.append(judge)
         try:
             debate = DebateWithJudge(
                 pro_agent=pro,
@@ -1204,13 +1242,14 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
             raw_result = _run_router("SequentialWorkflow", swarms_agents)
 
     elif effective_type == "MajorityVoting":
-        consensus_spec = req.director or req.agents[0]
+        consensus_spec = _with_req_retry(req.director or req.agents[0])
         consensus_llm = ResilientSwarmsLLM(
             consensus_spec,
             workspace_path=req.workspace_path,
             allow_local_edits=req.allow_local_edits,
             telemetry=telemetry,
             cancel_check=cancel_check,
+            retry_policy=consensus_spec.retry_policy,
         )
         try:
             mv = MajorityVoting(
@@ -1234,7 +1273,7 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
             raw_result = _run_router("ConcurrentWorkflow", swarms_agents)
 
     elif effective_type == "MixtureOfAgents":
-        agg_spec = req.director or req.agents[0]
+        agg_spec = _with_req_retry(req.director or req.agents[0])
         agg_agent = _make_clone_judge(
             agg_spec,
             "Sentez",
@@ -1244,6 +1283,7 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
             telemetry=telemetry,
             cancel_check=cancel_check,
         )
+        step_agents.append(agg_agent)
         try:
             moa = MixtureOfAgents(
                 name="ClawOffice-MixtureOfAgents",
@@ -1289,20 +1329,38 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
         flow = (req.rearrange_flow or "").strip()
         if not flow:
             flow = " -> ".join(a.agent_name for a in swarms_agents)
-        raw_result = _run_router("AgentRearrange", swarms_agents, flow=flow)
+        try:
+            raw_result = _run_router("AgentRearrange", swarms_agents, flow=flow)
+        except Exception as exc:
+            if isinstance(exc, SwarmCancelledError):
+                raise
+            _log_fallback("AgentRearrange", exc)
+            effective_type = "SequentialWorkflow"
+            run_state.swarm_type = "SequentialWorkflow (Rearrange Fallback)"
+            raw_result = _run_router("SequentialWorkflow", swarms_agents)
 
     elif effective_type in ("ConcurrentWorkflow", "SequentialWorkflow", "RoundRobin"):
-        raw_result = _run_router(effective_type, swarms_agents)
+        try:
+            raw_result = _run_router(effective_type, swarms_agents)
+        except Exception as exc:
+            if isinstance(exc, SwarmCancelledError) or effective_type == "RoundRobin":
+                raise
+            _log_fallback(effective_type, exc)
+            fallback_target = "SequentialWorkflow" if effective_type == "ConcurrentWorkflow" else "RoundRobin"
+            run_state.swarm_type = f"{fallback_target} ({effective_type} Fallback)"
+            effective_type = fallback_target
+            raw_result = _run_router(fallback_target, swarms_agents)
 
     elif effective_type == "PlannerWorkerSwarm":
         try:
-            planner_spec = req.director or req.agents[0]
+            planner_spec = _with_req_retry(req.director or req.agents[0])
             planner_llm = ResilientSwarmsLLM(
                 planner_spec,
                 workspace_path=req.workspace_path,
                 allow_local_edits=req.allow_local_edits,
                 telemetry=telemetry,
                 cancel_check=cancel_check,
+                retry_policy=planner_spec.retry_policy,
             )
             pw = PlannerWorkerSwarm(
                 name="ClawOffice-PlannerWorker",
@@ -1315,13 +1373,21 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
                 verbose=False,
             )
             orig_create_planner = pw._create_planner_agent
-            def _patched_planner(self_pw: Any, name: str = "Planner") -> Agent:
-                ag = orig_create_planner(name=name)
+            def _patched_planner(self_pw: Any, *args: Any, **kwargs: Any) -> Agent:
+                ag = orig_create_planner(*args, **kwargs)
                 ag.llm = planner_llm
                 ag.model_name = planner_llm.model_name
                 return ag
             import types
             pw._create_planner_agent = types.MethodType(_patched_planner, pw)
+            if hasattr(pw, "_create_judge_agent"):
+                orig_create_judge = pw._create_judge_agent
+                def _patched_judge(self_pw: Any, *args: Any, **kwargs: Any) -> Agent:
+                    ag = orig_create_judge(*args, **kwargs)
+                    ag.llm = planner_llm
+                    ag.model_name = planner_llm.model_name
+                    return ag
+                pw._create_judge_agent = types.MethodType(_patched_judge, pw)
             raw_result = pw.run(req.task)
         except Exception as exc:
             if isinstance(exc, SwarmCancelledError):
@@ -1333,13 +1399,14 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
 
     elif effective_type == "MultiAgentRouter":
         try:
-            router_spec = req.director or req.agents[0]
+            router_spec = _with_req_retry(req.director or req.agents[0])
             router_llm = ResilientSwarmsLLM(
                 router_spec,
                 workspace_path=req.workspace_path,
                 allow_local_edits=req.allow_local_edits,
                 telemetry=telemetry,
                 cancel_check=cancel_check,
+                retry_policy=router_spec.retry_policy,
             )
             mar = MultiAgentRouter(
                 name="ClawOffice-MultiAgentRouter",
@@ -1362,14 +1429,14 @@ def run_swarm_sync(req: SwarmRunRequest, run_state: RunState) -> Tuple[str, str,
         effective_type = "SequentialWorkflow"
         raw_result = _run_router("SequentialWorkflow", swarms_agents)
 
-    final_output, steps = normalize_swarm_steps(raw_result, swarms_agents)
+    final_output, steps = normalize_swarm_steps(raw_result, step_agents)
     if not final_output.strip() and not steps and effective_type not in ("SequentialWorkflow", "RoundRobin"):
         _log_fallback(effective_type, RuntimeError("Topoloji boş çıktı döndürdü"))
         fallback_from = effective_type
         effective_type = "RoundRobin"
         run_state.swarm_type = f"RoundRobin ({fallback_from} Empty Fallback)"
         raw_result = _run_router("RoundRobin", swarms_agents)
-        final_output, steps = normalize_swarm_steps(raw_result, swarms_agents)
+        final_output, steps = normalize_swarm_steps(raw_result, step_agents)
     return effective_type, final_output, steps
 
 
@@ -1409,24 +1476,43 @@ async def execute_swarm_request(req: SwarmRunRequest) -> Dict[str, Any]:
         effective_type, final_output, steps = await asyncio.to_thread(
             run_swarm_sync, req, state
         )
-        state.swarm_type = effective_type
-        state.duration_ms = int((time.time() - t0) * 1000)
-        state.final_output = final_output
-        state.steps = steps
-        state.status = "cancelled" if state.cancelled else "completed"
+        with state._lock:
+            state.swarm_type = effective_type
+            state.duration_ms = int((time.time() - t0) * 1000)
+            state.final_output = final_output
+            state.steps = steps
+            state.status = "cancelled" if state.cancelled else "completed"
+            status_snapshot = state.status
+            dur_snapshot = state.duration_ms
         return {
             "run_id": run_id,
             "swarm_type": effective_type,
-            "status": state.status,
-            "duration_ms": state.duration_ms,
+            "status": status_snapshot,
+            "duration_ms": dur_snapshot,
             "final_output": final_output,
             "steps": steps,
             "telemetry": telemetry.to_dict(),
         }
+    except SwarmCancelledError as cancel_exc:
+        with state._lock:
+            state.duration_ms = int((time.time() - t0) * 1000)
+            state.status = "cancelled"
+            state.error = redact_secrets(str(cancel_exc), secrets)
+        return {
+            "run_id": run_id,
+            "swarm_type": state.swarm_type,
+            "status": "cancelled",
+            "cancelled": True,
+            "duration_ms": state.duration_ms,
+            "final_output": "",
+            "steps": [],
+            "telemetry": telemetry.to_dict(),
+        }
     except Exception as exc:
-        state.duration_ms = int((time.time() - t0) * 1000)
-        state.status = "cancelled" if isinstance(exc, SwarmCancelledError) else "error"
-        state.error = redact_secrets(str(exc), secrets)
+        with state._lock:
+            state.duration_ms = int((time.time() - t0) * 1000)
+            state.status = "error"
+            state.error = redact_secrets(str(exc), secrets)
         raise
     finally:
         ACTIVE_RUNS.pop(run_id, None)
@@ -1464,6 +1550,8 @@ async def list_types_endpoint(request: Request) -> JSONResponse:
 
 
 async def list_runs_endpoint(request: Request) -> JSONResponse:
+    if not _check_auth(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     active = [r.to_summary() for r in ACTIVE_RUNS.values()]
     history = [r.to_summary() for r in RUN_HISTORY]
     return JSONResponse({"active": active, "recent": history, "total_runs": TOTAL_RUNS})
@@ -1476,7 +1564,9 @@ async def run_swarm_endpoint(request: Request) -> JSONResponse:
         payload = await request.json()
         req = SwarmRunRequest.model_validate(payload)
     except Exception as exc:
-        return JSONResponse({"error": f"Geçersiz istek: {exc}"}, status_code=400)
+        raw_err = re.sub(r"Bearer\s+[A-Za-z0-9._\-]{8,}", "Bearer ***REDACTED***", str(exc))
+        raw_err = re.sub(r"sk-[A-Za-z0-9_\-]{10,}", "sk-***REDACTED***", raw_err)
+        return JSONResponse({"error": f"Geçersiz istek: {raw_err[:280]}"}, status_code=400)
 
     secrets = _collect_secrets(req)
     try:
@@ -1490,12 +1580,15 @@ async def run_swarm_endpoint(request: Request) -> JSONResponse:
 
 
 async def cancel_run_endpoint(request: Request) -> JSONResponse:
+    if not _check_auth(request):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     run_id = request.path_params.get("run_id", "")
     state = ACTIVE_RUNS.get(run_id)
     if not state:
         return JSONResponse({"cancelled": False, "message": "Aktif çalışma bulunamadı"}, status_code=404)
-    state.cancelled = True
-    state.status = "cancelling"
+    with state._lock:
+        state.cancelled = True
+        state.status = "cancelling"
     return JSONResponse({"cancelled": True, "run_id": run_id})
 
 
@@ -1585,8 +1678,8 @@ async def mcp_endpoint(request: Request) -> Response:
             headers=headers,
         )
 
-    if method == "notifications/initialized":
-        return JSONResponse({}, status_code=202, headers=headers)
+    if method == "notifications/initialized" or (mid is None and method.startswith("notifications/")):
+        return Response(status_code=202, headers=headers)
 
     if method == "ping":
         return JSONResponse({"jsonrpc": "2.0", "id": mid, "result": {}}, headers=headers)
@@ -1627,12 +1720,19 @@ async def mcp_endpoint(request: Request) -> Response:
                     {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": "task parametresi gerekli"}},
                     headers=headers,
                 )
-            raw_agents = args.get("agents") or []
-            parsed_agents = [AgentSpec.model_validate(a) for a in raw_agents] if raw_agents else [_default_mcp_agent()]
+            try:
+                raw_agents = args.get("agents") or []
+                parsed_agents = [AgentSpec.model_validate(a) for a in raw_agents] if raw_agents else [_default_mcp_agent()]
+                max_loops_val = max(1, min(6, int(args.get("max_loops", 1) or 1)))
+            except Exception as exc:
+                return JSONResponse(
+                    {"jsonrpc": "2.0", "id": mid, "error": {"code": -32602, "message": f"Geçersiz argüman: {str(exc)[:200]}"}},
+                    headers=headers,
+                )
             req = SwarmRunRequest(
                 task=task,
                 swarm_type=str(args.get("swarm_type", "Auto")),
-                max_loops=int(args.get("max_loops", 1)),
+                max_loops=max_loops_val,
                 agents=parsed_agents,
             )
             try:

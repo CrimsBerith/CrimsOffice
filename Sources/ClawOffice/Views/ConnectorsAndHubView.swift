@@ -111,6 +111,15 @@ struct ConnectorsAndHubView: View {
                         }
                     }
 
+                    if !ghSummaryOutput.isEmpty {
+                        Text(ghSummaryOutput)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .liquidGlassCard(cornerRadius: 10)
+                    }
+
                     ScrollView {
                         LazyVStack(spacing: 10) {
                             if engine.lastGitHubCandidates.isEmpty {
@@ -218,7 +227,7 @@ struct ConnectorsAndHubView: View {
                         .liquidGlassCard(cornerRadius: 8)
 
                     Button("Kaydet") {
-                        let val = tokenDrafts[conn.id] ?? ""
+                        let val = tokenDrafts[conn.id] ?? conn.apiKey
                         engine.saveConnectorSecret(id: conn.id, apiKey: val)
                         actionFeedback = "✅ \(conn.name) anahtarı Keychain için kaydedildi."
                     }
@@ -398,25 +407,28 @@ private struct AddConnectorSheet: View {
     @State private var apiKey: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Yeni Servis Connector / MCP Ekle").font(.headline)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Yeni Servis Connector / MCP Ekle").font(.headline)
 
-            TextField("Kısa ad (slug, ör. hostinger-custom)", text: $slug)
-                .textFieldStyle(.roundedBorder)
-            TextField("Görünen Ad", text: $name)
-                .textFieldStyle(.roundedBorder)
+                TextField("Kısa ad (slug, ör. hostinger-custom)", text: $slug)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Görünen Ad", text: $name)
+                    .textFieldStyle(.roundedBorder)
 
-            Picker("Protokol", selection: $transport) {
-                ForEach(ConnectorTransport.allCases, id: \.self) { t in
-                    Text(t.rawValue).tag(t)
+                Picker("Protokol", selection: $transport) {
+                    ForEach(ConnectorTransport.allCases, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
                 }
-            }
 
-            Picker("Kimlik Doğrulama", selection: $authType) {
-                ForEach(ConnectorAuthType.allCases, id: \.self) { a in
-                    Text(a.rawValue).tag(a)
+                if transport != .mcpStdio {
+                    Picker("Kimlik Doğrulama", selection: $authType) {
+                        ForEach(ConnectorAuthType.allCases, id: \.self) { a in
+                            Text(a.rawValue).tag(a)
+                        }
+                    }
                 }
-            }
 
             TextField(transport == .mcpStdio ? "Komut (ör. npx -y @modelcontextprotocol/server-github)" : "Endpoint URL (https://...)", text: $endpoint)
                 .textFieldStyle(.roundedBorder)
@@ -449,8 +461,9 @@ private struct AddConnectorSheet: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(endpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            }
         }
         .padding(18)
-        .frame(width: 460)
+        .frame(minWidth: 460, idealWidth: 480, minHeight: 420)
     }
 }

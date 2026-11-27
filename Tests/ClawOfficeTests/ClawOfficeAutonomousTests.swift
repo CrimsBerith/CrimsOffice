@@ -1334,8 +1334,8 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         )
         XCTAssertEqual(payloads.count, 2)
         XCTAssertEqual(payloads[0].role, "architect")
-        XCTAssertEqual(payloads[0].provider.kind, "antigravityCLI")
-        XCTAssertEqual(payloads[0].fallbackProvider?.kind, "evren")
+        // Antigravity CLI is disabled by policy so Swarms safely promotes agent onto healthy EVREN
+        XCTAssertEqual(payloads[0].provider.kind, "evren")
         XCTAssertEqual(payloads[1].role, "developer")
         XCTAssertEqual(payloads[1].provider.authStyle, "bearerAndXApiKey")
         XCTAssertEqual(payloads[1].provider.apiKey, "evren_test_key_123")
@@ -1821,9 +1821,10 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         XCTAssertEqual(extracted[2].argument, "Sources/App.swift|||10|||40")
 
         let scrubbed = PowerShellTools.stripToolTags(from: mixedOutput, stripTrailingIncomplete: true)
-        XCTAssertFalse(scrubbed.contains("<|tool|>"))
-        XCTAssertFalse(scrubbed.contains("<tool_call>"))
+        XCTAssertFalse(scrubbed.contains("swarm_status"))
+        XCTAssertFalse(scrubbed.contains("Sources/App.swift"))
         XCTAssertFalse(scrubbed.contains("DSML"))
+        XCTAssertTrue(scrubbed.contains("```xml"), "Fenced markdown code examples must remain intact")
         XCTAssertTrue(scrubbed.contains("Sonuç özeti burada."))
 
         // 2. Native OpenAI tool_calls & Anthropic endpoint detection
@@ -2408,5 +2409,69 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         let policyObj = try XCTUnwrap(JSONSerialization.jsonObject(with: encodedPolicy) as? [String: Any])
         XCTAssertEqual(policyObj["max_retries"] as? Int, 2)
         XCTAssertEqual(policyObj["initial_delay"] as? Double, 0.5)
+    }
+
+    func testSecurityHardeningParserIntegrityAndSplitBrainMigration() async throws {
+        // 1. SSRF hardening blocks IPv6 link-local, octal/decimal/hex IPv4, and localhost variants
+        XCTAssertFalse(BrowserAutomationService.validateBrowserURL(URL(string: "http://[fe80::1]/")!, allowLocalNetwork: true).allowed)
+        XCTAssertFalse(BrowserAutomationService.validateBrowserURL(URL(string: "http://[::ffff:169.254.169.254]/latest")!, allowLocalNetwork: true).allowed)
+        XCTAssertFalse(BrowserAutomationService.validateBrowserURL(URL(string: "http://2130706433/")!, allowLocalNetwork: false).allowed)
+        XCTAssertFalse(BrowserAutomationService.validateBrowserURL(URL(string: "http://0177.0.0.1/")!, allowLocalNetwork: false).allowed)
+
+        // 2. Read-only shell blocker & normalized destructive command block
+        XCTAssertFalse(PowerShellTools.isReadOnlySafeShellCommand("cat ~/.ssh/id_rsa"))
+        XCTAssertFalse(PowerShellTools.isReadOnlySafeShellCommand("env"))
+        XCTAssertFalse(PowerShellTools.isReadOnlySafeShellCommand("git diff --output=/tmp/x"))
+        XCTAssertTrue(PowerShellTools.isBlockedShellCommand("rm  -fr  /"))
+        XCTAssertTrue(PowerShellTools.isBlockedShellCommand("/bin/rm -rf /"))
+
+        // 3. Tool parser & stripToolTags preserve markdown/multi-backtick examples and continue past unclosed tag
+        let sample = """
+        Örnek: ``<tool name="shell">echo nope</tool>``
+        <tool name="unclosed
+        <tool name="read_file">Package.swift</tool>
+        """
+        let calls = PowerShellTools.extractToolCalls(from: sample)
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls.first?.name, "read_file")
+        XCTAssertEqual(calls.first?.argument, "Package.swift")
+        let stripped = PowerShellTools.stripToolTags(from: sample)
+        XCTAssertTrue(stripped.contains("``<tool name=\"shell\">echo nope</tool>``"), "stripToolTags must preserve multi-backtick code examples")
+
+        // 4. Frontmatter parser preserves markdown horizontal rules in skill body
+        let skillRaw = """
+        ---
+        name: Clean Skill
+        description: Safe parse
+        ---
+        Body section 1
+        ---
+        Body section 2
+        """
+        let parsedSkill = OpenClawWorkspaceService.parseSkillMarkdown(slug: "clean-skill", raw: skillRaw, path: "/tmp/SKILL.md")
+        XCTAssertEqual(parsedSkill.name, "Clean Skill")
+        XCTAssertTrue(parsedSkill.body.contains("Body section 2"))
+
+        // 5. Antigravity CLI is disabled consistently across config & migrated automatically to EVREN
+        let evren = APIProviderConfig(name: "EVREN", kind: .evren, baseURL: "https://evren.example/v1", apiKey: "k", models: ["deepseek-v4.1-flash"], defaultModel: "deepseek-v4.1-flash")
+        let agy = APIProviderConfig(name: "Agy", kind: .antigravityCLI, baseURL: "/bin/sh", defaultModel: "gemini-4-hydrogen-xhigh")
+        XCTAssertFalse(agy.isConfigured)
+        let strandedAgent = OfficeAgent(
+            name: "Tamirci2", title: "Dev", emoji: "🔧", avatarAsset: "", symbolName: "wrench",
+            accentHex: "#38BDF8", providerId: agy.id, modelId: "gemini-4-hydrogen-xhigh",
+            systemPrompt: "Fix bugs", deskPosition: Point2D(x: 0.5, y: 0.5), currentPosition: Point2D(x: 0.5, y: 0.5)
+        )
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path,
+            customProviders: [agy, evren],
+            customAgents: [strandedAgent]
+        )
+        XCTAssertEqual(engine.agents.first?.providerId, evren.id, "Stranded antigravityCLI agent must migrate cleanly onto healthy EVREN provider")
+
+        // 6. runCommand failing to spawn in nonexistent cwd must not crash suspended DispatchSource timer
+        let failRes = await PowerShellTools.runCommand("echo hi", workspacePath: "/nonexistent-claw-dir-\(UUID().uuidString)")
+        XCTAssertFalse(failRes.succeeded)
     }
 }

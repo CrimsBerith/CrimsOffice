@@ -79,8 +79,12 @@ extension OfficeEngine {
     func searchGitHubInHub(query: String, kind: String = "all") async -> String {
         let res = await ConnectorAndGitHubService.searchGitHubRepos(query: query, kind: kind, limit: 10)
         lastGitHubCandidates = res.candidates
-        for tok in ConnectorAndGitHubService.extractSearchTokens(from: query) {
-            searchedTopicsInTurn.insert(tok)
+        if let sid = selectedAgentId ?? agents.first?.id {
+            var set = searchedTopicsByAgent[sid] ?? []
+            for tok in ConnectorAndGitHubService.extractSearchTokens(from: query) {
+                set.insert(tok)
+            }
+            searchedTopicsByAgent[sid] = set
         }
         return res.formatted
     }
@@ -180,6 +184,9 @@ extension OfficeEngine {
             return (res.output, res.succeeded, false)
 
         case "browser_eval":
+            guard allowFileWrites else {
+                return ("Güvenlik ayarı: Sayfa içi JavaScript çalıştırma salt-okunur modda kapalı.", false, false)
+            }
             let res = await browser.agentEvalJS(script: argument, agentName: agentName)
             return (res.output, res.succeeded, false)
 
@@ -224,6 +231,10 @@ extension OfficeEngine {
                 let available = connectors.map { $0.slug }.joined(separator: ", ")
                 return ("'\(slug)' adlı connector bulunamadı. Mevcutlar: \(available). Önce `list_connectors` veya `search_github` ile ara.", false, false)
             }
+            let isReadOnlyConnectorAction = action.lowercased() == "tools/list" || action.lowercased() == "list" || action.uppercased().hasPrefix("GET ")
+            if !allowFileWrites && !isReadOnlyConnectorAction && conn.transport == .mcpStdio {
+                return ("Güvenlik ayarı: Yerel süreç çalıştıran MCP stdio eylemi salt-okunur modda kapalı.", false, false)
+            }
             let res = await ConnectorAndGitHubService.executeConnectorAction(
                 connector: conn,
                 action: action,
@@ -263,7 +274,8 @@ extension OfficeEngine {
             let envOrHeader = parts.count >= 6 ? parts[5].trimmingCharacters(in: .whitespacesAndNewlines) : ""
 
             let topicTokens = ConnectorAndGitHubService.extractSearchTokens(from: "\(slug) \(title) \(desc)")
-            let alreadySearched = !topicTokens.isEmpty && topicTokens.allSatisfy { searchedTopicsInTurn.contains($0) }
+            let agentTopics = searchedTopicsByAgent[agentId] ?? []
+            let alreadySearched = !topicTokens.isEmpty && topicTokens.allSatisfy { agentTopics.contains($0) }
 
             // Reuse-First Guardrail: search existing catalog & GitHub before creating from scratch.
             if !hasForce && !alreadySearched {
@@ -274,7 +286,9 @@ extension OfficeEngine {
                     connectors: connectors,
                     performRemoteSearch: performRemoteReuseCheck
                 )
-                for tok in topicTokens { searchedTopicsInTurn.insert(tok) }
+                var updatedTopics = searchedTopicsByAgent[agentId] ?? []
+                for tok in topicTokens { updatedTopics.insert(tok) }
+                searchedTopicsByAgent[agentId] = updatedTopics
                 if !check.githubMatches.isEmpty {
                     lastGitHubCandidates = check.githubMatches
                 }
@@ -334,16 +348,20 @@ extension OfficeEngine {
             if !res.candidates.isEmpty {
                 lastGitHubCandidates = res.candidates
             }
+            var qTopics = searchedTopicsByAgent[agentId] ?? []
             for tok in ConnectorAndGitHubService.extractSearchTokens(from: q) {
-                searchedTopicsInTurn.insert(tok)
+                qTopics.insert(tok)
             }
+            searchedTopicsByAgent[agentId] = qTopics
             return (res.formatted, res.error == nil, false)
 
         case "inspect_github_repo":
             let res = await ConnectorAndGitHubService.inspectGitHubRepo(target: argument)
+            var iTopics = searchedTopicsByAgent[agentId] ?? []
             for tok in ConnectorAndGitHubService.extractSearchTokens(from: argument) {
-                searchedTopicsInTurn.insert(tok)
+                iTopics.insert(tok)
             }
+            searchedTopicsByAgent[agentId] = iTopics
             return (res.summary, res.succeeded, false)
 
         case "install_github_skill":
@@ -360,8 +378,10 @@ extension OfficeEngine {
             )
             if res.succeeded {
                 refreshWorkspaceAndSkills()
-                let slug = deriveSkillSlug(from: src, override: slugOverride)
-                if let idx = skills.firstIndex(where: { $0.id.lowercased() == slug.lowercased() }) {
+                let installedSlug = res.installedPath.map {
+                    URL(fileURLWithPath: $0).deletingLastPathComponent().lastPathComponent
+                } ?? deriveSkillSlug(from: src, override: slugOverride)
+                if let idx = skills.firstIndex(where: { $0.id.lowercased() == installedSlug.lowercased() }) {
                     skills[idx].isEnabled = true
                     saveConfig()
                 }
@@ -384,7 +404,8 @@ extension OfficeEngine {
             let skBody = parts.dropFirst(3).joined(separator: "|||").trimmingCharacters(in: .whitespacesAndNewlines)
 
             let topicTokens = ConnectorAndGitHubService.extractSearchTokens(from: "\(slug) \(skName) \(skDesc)")
-            let alreadySearched = !topicTokens.isEmpty && topicTokens.allSatisfy { searchedTopicsInTurn.contains($0) }
+            let agentTopics = searchedTopicsByAgent[agentId] ?? []
+            let alreadySearched = !topicTokens.isEmpty && topicTokens.allSatisfy { agentTopics.contains($0) }
 
             if !hasForce && !alreadySearched {
                 let check = await ConnectorAndGitHubService.checkExistingSolutionsBeforeCreating(
@@ -394,7 +415,9 @@ extension OfficeEngine {
                     connectors: connectors,
                     performRemoteSearch: performRemoteReuseCheck
                 )
-                for tok in topicTokens { searchedTopicsInTurn.insert(tok) }
+                var updatedTopics = searchedTopicsByAgent[agentId] ?? []
+                for tok in topicTokens { updatedTopics.insert(tok) }
+                searchedTopicsByAgent[agentId] = updatedTopics
                 if !check.githubMatches.isEmpty {
                     lastGitHubCandidates = check.githubMatches
                 }

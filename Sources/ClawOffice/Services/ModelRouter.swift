@@ -272,8 +272,8 @@ enum ModelRouter: Sendable {
                 }
             }
 
-            // Slight preference for reliable fast/free-tier or explicitly configured primary providers over generic routers
-            if p.kind == .evren || p.kind == .antigravityCLI {
+            // Slight preference for reliable fast/free-tier primary providers over generic routers
+            if p.kind == .evren {
                 score += 12
             } else if p.kind == .groq {
                 score += 8

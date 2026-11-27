@@ -265,6 +265,26 @@ enum OpenClawWorkspaceService {
         return found.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    static func splitYAMLFrontmatter(_ raw: String) -> (frontmatter: String, body: String)? {
+        let normalized = raw.replacingOccurrences(of: "\r\n", with: "\n")
+        guard normalized.hasPrefix("---\n") || normalized.hasPrefix("--- \n") else { return nil }
+        guard let firstNL = normalized.firstIndex(of: "\n") else { return nil }
+        let afterOpen = normalized.index(after: firstNL)
+        if normalized[afterOpen...].hasPrefix("---\n") || normalized[afterOpen...] == "---" {
+            let bodyStart = normalized[afterOpen...].dropFirst(3).trimmingCharacters(in: .whitespacesAndNewlines)
+            return ("", bodyStart)
+        }
+        guard let closeRange = normalized.range(of: "\n---", range: afterOpen..<normalized.endIndex) else { return nil }
+        let afterClose = closeRange.upperBound
+        if afterClose < normalized.endIndex {
+            let nextChar = normalized[afterClose]
+            guard nextChar == "\n" else { return nil }
+        }
+        let front = String(normalized[afterOpen..<closeRange.lowerBound])
+        let body = String(normalized[afterClose...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return (front, body)
+    }
+
     static func parseSkillMarkdown(slug: String, raw: String, path: String) -> AgentSkill {
         var name = slug
         var desc = "OpenClaw SKILL.md yeteneği"
@@ -272,12 +292,9 @@ enum OpenClawWorkspaceService {
         var triggers: [String] = [slug, "/\(slug)"]
         var inTriggersBlock = false
 
-        if raw.hasPrefix("---") {
-            let parts = raw.components(separatedBy: "---")
-            if parts.count >= 3 {
-                let front = parts[1]
-                body = parts.dropFirst(2).joined(separator: "---").trimmingCharacters(in: .whitespacesAndNewlines)
-                for line in front.components(separatedBy: .newlines) {
+        if let parsed = splitYAMLFrontmatter(raw) {
+            body = parsed.body
+            for line in parsed.frontmatter.components(separatedBy: .newlines) {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
                     if trimmed.hasPrefix("name:") {
                         inTriggersBlock = false
@@ -300,9 +317,8 @@ enum OpenClawWorkspaceService {
                     } else if inTriggersBlock && trimmed.hasPrefix("-") {
                         let val = trimmed.dropFirst().trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
                         if !val.isEmpty { triggers.append(val) }
-                    } else if !trimmed.isEmpty && trimmed.contains(":") {
-                        inTriggersBlock = false
-                    }
+                } else if !trimmed.isEmpty && trimmed.contains(":") {
+                    inTriggersBlock = false
                 }
             }
         }
@@ -380,9 +396,10 @@ enum OpenClawWorkspaceService {
                 if let d = raw as? [String: Any], let inner = d["id"] { return extractID(inner) }
                 return ""
             }
+            let rawNodes = (root["nodes"] as? [[String: Any]]) ?? []
             let rawLinks = (root["links"] as? [[String: Any]]) ?? (root["edges"] as? [[String: Any]]) ?? []
-            var allEdges: [GraphEdge] = []
-            allEdges.reserveCapacity(min(rawLinks.count, 400))
+            var rawEdges: [GraphEdge] = []
+            rawEdges.reserveCapacity(rawLinks.count)
             for link in rawLinks {
                 let src = extractID(link["source"])
                 let dst = extractID(link["target"])
@@ -390,14 +407,10 @@ enum OpenClawWorkspaceService {
                 if !src.isEmpty && !dst.isEmpty {
                     degreeMap[src, default: 0] += 1
                     degreeMap[dst, default: 0] += 1
-                    if allEdges.count < 400 {
-                        allEdges.append(GraphEdge(source: src, target: dst, relation: rel))
-                    }
+                    rawEdges.append(GraphEdge(source: src, target: dst, relation: rel))
                 }
             }
-            edges = allEdges
 
-            let rawNodes = (root["nodes"] as? [[String: Any]]) ?? []
             var allNodes: [GraphNode] = []
             allNodes.reserveCapacity(rawNodes.count)
             for n in rawNodes {
@@ -413,6 +426,8 @@ enum OpenClawWorkspaceService {
                 return $0.label < $1.label
             }
             nodes = Array(ranked.prefix(200))
+            let keptNodeIds = Set(nodes.map(\.id))
+            edges = Array(rawEdges.filter { keptNodeIds.contains($0.source) && keptNodeIds.contains($0.target) }.prefix(400))
         }
         if reportText.isEmpty && nodes.isEmpty { return nil }
         let gods = Array(nodes.prefix(8))
@@ -584,15 +599,22 @@ enum PowerShellTools {
                 continue
             }
             if text[scan] == "`" {
-                let afterOpen = text.index(after: scan)
-                if afterOpen < text.endIndex,
-                   let close = text[afterOpen...].firstIndex(of: "`"),
-                   !text[afterOpen..<close].contains("\n") {
-                    let closeEnd = text.index(after: close)
-                    ranges.append(scan..<closeEnd)
-                    scan = closeEnd
+                var tickCount = 0
+                var afterRun = scan
+                while afterRun < text.endIndex, text[afterRun] == "`" {
+                    tickCount += 1
+                    afterRun = text.index(after: afterRun)
+                }
+                let closingRun = String(repeating: "`", count: tickCount)
+                if afterRun < text.endIndex,
+                   let close = text.range(of: closingRun, range: afterRun..<text.endIndex),
+                   !text[afterRun..<close.lowerBound].contains("\n") {
+                    ranges.append(scan..<close.upperBound)
+                    scan = close.upperBound
                     continue
                 }
+                scan = afterRun
+                continue
             }
             scan = text.index(after: scan)
         }
@@ -697,6 +719,55 @@ enum PowerShellTools {
                 return "\(agent)|||\(body)"
             }
             return firstStr(["argument", "arg"]) ?? ""
+        case "use_connector":
+            let slug = firstStr(["slug", "connector", "id"]) ?? ""
+            let action = firstStr(["action", "tool", "method", "path", "operation"]) ?? "tools/list"
+            if let argsDict = (params["arguments"] as? [String: Any]) ?? (params["params"] as? [String: Any]),
+               let data = try? JSONSerialization.data(withJSONObject: argsDict),
+               let json = String(data: data, encoding: .utf8) {
+                return "\(slug)|||\(action)|||\(json)"
+            }
+            if let argsStr = firstStr(["arguments", "json", "payload", "body"]) {
+                return "\(slug)|||\(action)|||\(argsStr)"
+            }
+            return slug.isEmpty ? (firstStr(["argument", "arg"]) ?? "") : "\(slug)|||\(action)"
+        case "hire_agent":
+            let name = firstStr(["name", "agent"]) ?? "Uzman"
+            let title = firstStr(["title", "role"]) ?? "Uzman Ajan"
+            let emoji = firstStr(["emoji"]) ?? "🤖"
+            let model = firstStr(["model", "modelId", "model_id"]) ?? "auto"
+            let prompt = firstStr(["systemPrompt", "system_prompt", "prompt"]) ?? ""
+            let temp = firstStr(["temperature"]) ?? "0.25"
+            return "\(name)|||\(title)|||\(emoji)|||\(model)|||\(prompt)|||\(temp)"
+        case "create_plan":
+            let goal = firstStr(["goal", "title", "objective"]) ?? "Plan"
+            let tasks = firstStr(["tasks", "steps", "items"]) ?? ""
+            return tasks.isEmpty ? goal : "\(goal)|||\(tasks)"
+        case "update_task":
+            let task = firstStr(["task", "id", "title"]) ?? ""
+            let status = firstStr(["status", "state"]) ?? "in_progress"
+            let note = firstStr(["note", "summary"]) ?? ""
+            return note.isEmpty ? "\(task)|||\(status)" : "\(task)|||\(status)|||\(note)"
+        case "install_github_skill", "inspect_github_repo":
+            let repo = firstStr(["repo", "source", "url"]) ?? ""
+            if let slug = firstStr(["slug"]) { return "\(repo)|||\(slug)" }
+            return repo
+        case "create_skill":
+            let slug = firstStr(["slug"]) ?? "custom-skill"
+            let name = firstStr(["name", "title"]) ?? slug
+            let desc = firstStr(["description", "desc"]) ?? "Özel skill"
+            let body = firstStr(["body", "content", "instructions"]) ?? ""
+            return "\(slug)|||\(name)|||\(desc)|||\(body)"
+        case "search_github":
+            let q = firstStr(["query", "q"]) ?? ""
+            if let k = firstStr(["kind", "type"]) { return "\(q)|||\(k)" }
+            return q
+        case "open_app", "open_path", "graphify_query", "browser_open", "browser_navigate", "browser_goto":
+            return firstStr(["app", "name", "path", "url", "query", "target", "argument", "arg"]) ?? ""
+        case "browser_type":
+            let target = firstStr(["target", "selector", "ref"]) ?? ""
+            let text = firstStr(["text", "value"]) ?? ""
+            return "\(target)|||\(text)"
         default:
             if let direct = firstStr(["argument", "arg"]) { return direct }
             let vals = params.keys.sorted().compactMap { k -> String? in
@@ -773,14 +844,26 @@ enum PowerShellTools {
                 searchStart = fence.upperBound
                 continue
             }
-            guard let q = text.range(of: quoteChar, range: s.upperBound..<text.endIndex) else { break }
+            guard let q = text.range(of: quoteChar, range: s.upperBound..<text.endIndex) else {
+                searchStart = s.upperBound
+                continue
+            }
+            let rawAttrName = String(text[s.upperBound..<q.lowerBound])
+            let quoteSymbol = String(quoteChar.prefix(1))
+            if rawAttrName.contains("\n") || rawAttrName.contains("<") || rawAttrName.contains(quoteSymbol) {
+                searchStart = s.upperBound
+                continue
+            }
             let endTool = text.range(of: "</tool>", range: q.upperBound..<text.endIndex)
             let endDSML = text.range(of: "</｜DSML｜", range: q.upperBound..<text.endIndex)
             let closeRange: Range<String.Index>? = {
                 if let et = endTool, let ed = endDSML { return et.lowerBound <= ed.lowerBound ? et : ed }
                 return endTool ?? endDSML
             }()
-            guard let e = closeRange else { break }
+            guard let e = closeRange else {
+                searchStart = q.upperBound
+                continue
+            }
 
             var nextPos = e.upperBound
             if text[e.lowerBound...].hasPrefix("</｜DSML｜"),
@@ -802,7 +885,10 @@ enum PowerShellTools {
                 searchStart = fence.upperBound
                 continue
             }
-            guard let closePipe = text.range(of: "<|/tool|>", range: openPipe.upperBound..<text.endIndex) else { break }
+            guard let closePipe = text.range(of: "<|/tool|>", range: openPipe.upperBound..<text.endIndex) else {
+                searchStart = openPipe.upperBound
+                continue
+            }
             let body = String(text[openPipe.upperBound..<closePipe.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             searchStart = closePipe.upperBound
             if !body.isEmpty {
@@ -827,7 +913,10 @@ enum PowerShellTools {
                     continue
                 }
                 guard let gt = text.range(of: ">", range: openInv.upperBound..<text.endIndex),
-                      let closeInv = text.range(of: closeTag, range: gt.upperBound..<text.endIndex) else { break }
+                      let closeInv = text.range(of: closeTag, range: gt.upperBound..<text.endIndex) else {
+                    searchStart = openInv.upperBound
+                    continue
+                }
                 let attrs = String(text[openInv.upperBound..<gt.lowerBound])
                 let inner = String(text[gt.upperBound..<closeInv.lowerBound])
                 searchStart = closeInv.upperBound
@@ -863,7 +952,10 @@ enum PowerShellTools {
                 searchStart = fence.upperBound
                 continue
             }
-            guard let closeTC = text.range(of: "</tool_call>", range: openTC.upperBound..<text.endIndex) else { break }
+            guard let closeTC = text.range(of: "</tool_call>", range: openTC.upperBound..<text.endIndex) else {
+                searchStart = openTC.upperBound
+                continue
+            }
             let rawJSON = String(text[openTC.upperBound..<closeTC.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             searchStart = closeTC.upperBound
             if let data = rawJSON.data(using: .utf8),
@@ -894,9 +986,26 @@ enum PowerShellTools {
         return Array(found.prefix(12).map(\.call))
     }
 
-    /// Removes completed `<tool ...>`, `<|tool|>`, `<tool_call>`, `<｜DSML｜...>`, and `<invoke ...>` blocks from prose without collapsing internal spaces.
+    /// Removes completed `<tool ...>`, `<|tool|>`, `<tool_call>`, `<｜DSML｜...>`, and `<invoke ...>` blocks outside protected code spans.
     static func stripToolTags(from raw: String, stripTrailingIncomplete: Bool = false) -> String {
-        var cleaned = raw
+        let protected = codeProtectedRanges(in: raw)
+        var placeholders: [(token: String, original: String)] = []
+        var working = raw
+        if !protected.isEmpty {
+            var rebuilt = ""
+            var cursor = raw.startIndex
+            for (idx, r) in protected.enumerated() {
+                rebuilt += String(raw[cursor..<r.lowerBound])
+                let token = "__CLAW_CODE_SPAN_\(idx)__"
+                placeholders.append((token, String(raw[r])))
+                rebuilt += token
+                cursor = r.upperBound
+            }
+            rebuilt += String(raw[cursor..<raw.endIndex])
+            working = rebuilt
+        }
+
+        var cleaned = working
 
         // 1. <tool name="...">...</tool> or </｜DSML｜...>
         while let s = cleaned.range(of: "<tool name=\"") ?? cleaned.range(of: "<tool name='") {
@@ -960,6 +1069,9 @@ enum PowerShellTools {
                     cleaned.removeSubrange(openPartial.lowerBound..<cleaned.endIndex)
                 }
             }
+        }
+        for pair in placeholders {
+            cleaned = cleaned.replacingOccurrences(of: pair.token, with: pair.original)
         }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -1095,6 +1207,8 @@ enum PowerShellTools {
         try? pkill.run()
         kill(pid, SIGTERM)
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.6) {
+            // Only send SIGKILL if the process is still alive (prevents signaling a reused PID)
+            guard kill(pid, 0) == 0 else { return }
             let pkillForce = Process()
             pkillForce.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
             pkillForce.arguments = ["-KILL", "-P", "\(pid)"]
@@ -1104,6 +1218,21 @@ enum PowerShellTools {
             try? pkillForce.run()
             kill(pid, SIGKILL)
         }
+    }
+
+    static func isBlockedShellCommand(_ command: String) -> Bool {
+        let collapsed = command
+            .lowercased()
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "/bin/rm", with: "rm")
+            .replacingOccurrences(of: "/usr/bin/sudo", with: "sudo")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let blocked = [
+            "rm -rf /", "rm -fr /", "rm -rf ~", "rm -fr ~",
+            "rm -rf /*", "rm -fr /*", ":(){", "sudo ", "mkfs",
+            "dd if=", "shutdown", "reboot", "diskutil erase"
+        ]
+        return blocked.contains { collapsed.contains($0) }
     }
 
     static func readBoundedPipeData(from handle: FileHandle, maxBytes: Int = 262_144) -> (data: Data, truncated: Bool) {
@@ -1129,8 +1258,7 @@ enum PowerShellTools {
 
     static func runCommand(_ command: String, workspacePath: String, wrapWithRTK: Bool = false, timeoutSeconds: TimeInterval? = nil) async -> LocalToolResult {
         let lower = command.lowercased()
-        let blocked = ["rm -rf /", "rm -rf ~", "rm -rf /*", ":(){", "sudo ", "mkfs", "dd if=", "shutdown", "reboot", "diskutil erase"]
-        for b in blocked where lower.contains(b) {
+        if isBlockedShellCommand(command) {
             return LocalToolResult(toolName: "shell", commandUsed: command, usedRTK: false, output: "Güvenlik politikası gereği engellendi: \(command)", succeeded: false, editRecord: nil)
         }
 
@@ -1211,15 +1339,17 @@ enum PowerShellTools {
             let (exitCode, outResult, errResult) = try await withTaskCancellationHandler { () async throws -> (Int32, (data: Data, truncated: Bool), (data: Data, truncated: Bool)) in
                 try Task.checkCancellation()
                 let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+                let timerResumed = FlagBox()
                 timer.schedule(deadline: .now() + effectiveTimeout)
                 timer.setEventHandler {
                     timedOutBox.value = true
                     procBox.terminateTree()
                 }
                 defer {
+                    if !timerResumed.value {
+                        timer.resume()
+                    }
                     timer.cancel()
-                    try? outPipe.fileHandleForReading.close()
-                    try? errPipe.fileHandleForReading.close()
                 }
 
                 let outTask = Task.detached(priority: .userInitiated) {
@@ -1238,12 +1368,16 @@ enum PowerShellTools {
                     do {
                         try p.run()
                         procBox.set(p)
-                        timer.resume()
+                        if timerResumed.compareAndSetTrue() {
+                            timer.resume()
+                        }
                         if Task.isCancelled {
                             procBox.terminateTree()
                         }
                     } catch {
                         p.terminationHandler = nil
+                        try? outPipe.fileHandleForWriting.close()
+                        try? errPipe.fileHandleForWriting.close()
                         if exitOnce.compareAndSetTrue() {
                             cont.resume(throwing: error)
                         }
@@ -1252,6 +1386,8 @@ enum PowerShellTools {
 
                 let outRes = await outTask.value
                 let errRes = await errTask.value
+                try? outPipe.fileHandleForReading.close()
+                try? errPipe.fileHandleForReading.close()
                 return (status, outRes, errRes)
             } onCancel: {
                 procBox.terminateTree()
@@ -1419,13 +1555,21 @@ enum PowerShellTools {
         if forbiddenMeta.contains(where: { trimmed.contains($0) }) {
             return false
         }
+        let lower = trimmed.lowercased()
+        let sensitiveMarkers = [
+            "~/.ssh", "/.ssh/", "~/.gnupg", "/.gnupg/", "~/.openclaw/identity",
+            "/etc/shadow", "/etc/passwd", "--output", "--pre=", "--pre ", "-o/"
+        ]
+        if sensitiveMarkers.contains(where: { lower.contains($0) }) {
+            return false
+        }
         let parts = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         guard let head = parts.first else { return false }
         let idx = head == "rtk" ? 1 : 0
         guard idx < parts.count else { return false }
         let exe = parts[idx].lowercased()
         let second = (idx + 1 < parts.count) ? parts[idx + 1].lowercased() : ""
-        let readOnlyCommands: Set<String> = ["ls", "pwd", "cat", "head", "tail", "wc", "grep", "rg", "which", "echo", "stat", "file", "uname", "sw_vers", "df", "env", "date"]
+        let readOnlyCommands: Set<String> = ["ls", "pwd", "cat", "head", "tail", "wc", "grep", "rg", "which", "echo", "stat", "file", "uname", "sw_vers", "df", "date"]
         if readOnlyCommands.contains(exe) {
             return true
         }
@@ -1698,6 +1842,9 @@ enum PowerShellTools {
             return await runCommand("graphify path \(single)", workspacePath: workspacePath, wrapWithRTK: false)
 
         case "open_app":
+            guard allowWrites else {
+                return LocalToolResult(toolName: name, commandUsed: argument, usedRTK: false, output: "Güvenlik ayarı: Uygulama başlatma salt-okunur modda kapalı.", succeeded: false, editRecord: nil)
+            }
             let rawApp = argument.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !rawApp.isEmpty, !rawApp.hasPrefix("-") else {
                 return LocalToolResult(toolName: name, commandUsed: argument, usedRTK: false, output: "Geçersiz uygulama adı: \(argument)", succeeded: false, editRecord: nil)

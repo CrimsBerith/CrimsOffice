@@ -281,7 +281,7 @@ struct MarkdownMessageView: View {
                             inlineText(title)
                                 .font(.system(size: baseFontSize - 1, weight: .bold))
                                 .padding(.horizontal, cellHPad).padding(.vertical, compact ? 5 : 6)
-                                .frame(minWidth: minColWidth, alignment: .leading)
+                                .frame(minWidth: minColWidth, maxWidth: compact ? 220 : 280, alignment: .leading)
                         }
                     }
                     .background(Color.primary.opacity(0.08))
@@ -294,7 +294,7 @@ struct MarkdownMessageView: View {
                                 inlineText(cell)
                                     .font(.system(size: baseFontSize - 1))
                                     .padding(.horizontal, cellHPad).padding(.vertical, cellVPad)
-                                    .frame(minWidth: minColWidth, alignment: .leading)
+                                    .frame(minWidth: minColWidth, maxWidth: compact ? 220 : 280, alignment: .leading)
                             }
                         }
                         .background(rIdx % 2 == 1 ? Color.primary.opacity(0.03) : Color.clear)

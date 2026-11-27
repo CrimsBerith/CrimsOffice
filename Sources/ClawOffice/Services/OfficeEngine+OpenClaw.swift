@@ -143,12 +143,21 @@ extension OfficeEngine {
         if snap.gatewayOnline && !snap.webSocketConnected {
             OpenClawGatewayService.shared.connectWebSocket(port: snap.gatewayPort) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    self?.openClawGatewaySnap.webSocketConnected = true
-                    self?.openClawSessions = OpenClawGatewayService.scanSessionSummaries(limit: 30)
+                    guard let self else { return }
+                    self.openClawGatewaySnap.webSocketConnected = true
+                    let scanned = await Task.detached(priority: .utility) {
+                        OpenClawGatewayService.scanSessionSummaries(limit: 30)
+                    }.value
+                    self.openClawSessions = scanned
                 }
             }
+        } else if !snap.gatewayOnline {
+            openClawGatewaySnap.webSocketConnected = false
         }
-        openClawSessions = OpenClawGatewayService.scanSessionSummaries(limit: 30)
+        let initialSessions = await Task.detached(priority: .utility) {
+            OpenClawGatewayService.scanSessionSummaries(limit: 30)
+        }.value
+        openClawSessions = initialSessions
     }
 
     func runOpenClawGatewayAction(_ action: String) async -> (Bool, String) {
@@ -201,7 +210,7 @@ extension OfficeEngine {
             let intervalSec = TimeInterval(max(1, cronJobs[idx].intervalMinutes) * 60)
             let anchor = cronJobs[idx].lastRunAt ?? cronJobs[idx].createdAt
             if now.timeIntervalSince(anchor) >= intervalSec {
-                runCronJobNow(id: cronJobs[idx].id)
+                runCronJobNow(id: cronJobs[idx].id, triggeredByScheduler: true)
             }
         }
     }
@@ -232,11 +241,15 @@ extension OfficeEngine {
         saveConfig()
     }
 
-    func runCronJobNow(id: UUID) {
+    func runCronJobNow(id: UUID, triggeredByScheduler: Bool = false) {
         guard let idx = cronJobs.firstIndex(where: { $0.id == id }) else { return }
         let targetName = cronJobs[idx].targetAgentName
         let agent = agents.first(where: { $0.name.lowercased() == targetName.lowercased() }) ?? agents.first
         guard let target = agent else { return }
+        if triggeredByScheduler && target.status.isBusy {
+            log(.info, source: "Cron", "⏳ '\(cronJobs[idx].name)' ertelendi: \(target.name) aktif görevde.")
+            return
+        }
         cronJobs[idx].lastRunAt = Date()
         cronJobs[idx].lastStatus = "Çalıştırıldı (\(Date().formatted(date: .omitted, time: .shortened)))"
         saveConfig()
@@ -266,13 +279,14 @@ extension OfficeEngine {
     }
 
     func runSecurityAudit() async {
-        let blockedCount = logs.filter { $0.message.contains("Güvenlik politikası gereği engellendi") }.count
+        let blockedCount = logs.filter { $0.message.contains("Güvenlik politikası gereği engellendi") || $0.message.contains("Güvenlik engeli") }.count
+        let redactedCount = logs.filter { $0.message.contains("***REDACTED***") || $0.message.contains("[REDACTED]") }.count
         let snap = await OpenClawGatewayService.shared.runSecurityAudit(
             providers: providers,
             connectors: connectors,
             gatewayPort: openClawGatewaySnap.gatewayPort,
             blockedCommandsCount: blockedCount,
-            redactedSecretsCount: failoverEventCount
+            redactedSecretsCount: redactedCount
         )
         securityAudit = snap
     }

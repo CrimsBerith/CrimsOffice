@@ -72,6 +72,9 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
         guard ephemeral != useEphemeralSession else { return }
         finishPendingNavigation(with: .failure(CancellationError()))
         let current = webView.url
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
         useEphemeralSession = ephemeral
         let nextView = Self.makeWebView(ephemeral: ephemeral)
         configureWebView(nextView)
@@ -95,27 +98,55 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             return (false, "Yalnızca http:// ve https:// URL adreslerine izin verilir (engellendi: \(url.scheme ?? "yok")).")
         }
-        guard let host = url.host?.lowercased(), !host.isEmpty else {
+        guard var host = url.host?.lowercased(), !host.isEmpty else {
             return (false, "Geçersiz URL host.")
         }
-        if host == "metadata.google.internal" || host.hasPrefix("169.254.") || host == "fe80::" {
+        if host.hasPrefix("[") && host.hasSuffix("]") {
+            host = String(host.dropFirst().dropLast())
+        }
+        while host.hasSuffix(".") { host.removeLast() }
+
+        let ipv4Octets = resolveNumericIPv4Octets(host)
+        if let oct = ipv4Octets {
+            // Link-local 169.254.0.0/16 (cloud metadata) always blocked regardless of allowLocalNetwork
+            if oct.0 == 169 && oct.1 == 254 {
+                return (false, "Güvenlik politikası: Bulut metadata / link-local adresine tarayıcı erişimi engellendi.")
+            }
+        }
+        if host == "metadata.google.internal"
+            || host.hasPrefix("fe80:")
+            || host.hasPrefix("::ffff:169.254.") {
             return (false, "Güvenlik politikası: Bulut metadata / link-local adresine tarayıcı erişimi engellendi.")
         }
         if !allowLocalNetwork {
-            let localHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
-            if localHosts.contains(host) || host.hasSuffix(".local") || isPrivateIPv4(host) {
+            let localHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "::ffff:127.0.0.1", "::"]
+            if localHosts.contains(host) || host.hasSuffix(".local") || isPrivateOrLoopbackIPv4(octets: ipv4Octets) || host.hasPrefix("::ffff:127.") || host.hasPrefix("::ffff:10.") || host.hasPrefix("::ffff:192.168.") {
                 return (false, "Güvenlik ayarı: Yerel ağ/localhost tarayıcı erişimi kapalı (\(host)).")
             }
         }
         return (true, nil)
     }
 
-    nonisolated private static func isPrivateIPv4(_ host: String) -> Bool {
-        let octets = host.split(separator: ".").compactMap { Int($0) }
-        guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else { return false }
-        if octets[0] == 10 { return true }
-        if octets[0] == 172 && (16...31).contains(octets[1]) { return true }
-        if octets[0] == 192 && octets[1] == 168 { return true }
+    nonisolated private static func resolveNumericIPv4Octets(_ rawHost: String) -> (Int, Int, Int, Int)? {
+        let stripped = rawHost.hasPrefix("::ffff:") ? String(rawHost.dropFirst(7)) : rawHost
+        var addr = in_addr()
+        if inet_aton(stripped, &addr) != 0 {
+            let hostOrder = UInt32(bigEndian: addr.s_addr)
+            return (
+                Int((hostOrder >> 24) & 0xFF),
+                Int((hostOrder >> 16) & 0xFF),
+                Int((hostOrder >> 8) & 0xFF),
+                Int(hostOrder & 0xFF)
+            )
+        }
+        return nil
+    }
+
+    nonisolated private static func isPrivateOrLoopbackIPv4(octets: (Int, Int, Int, Int)?) -> Bool {
+        guard let oct = octets else { return false }
+        if oct.0 == 127 || oct.0 == 0 || oct.0 == 10 { return true }
+        if oct.0 == 172 && (16...31).contains(oct.1) { return true }
+        if oct.0 == 192 && oct.1 == 168 { return true }
         return false
     }
 
@@ -401,7 +432,12 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
         let clean = argument.trimmingCharacters(in: .whitespacesAndNewlines)
         if let secs = Double(clean), secs > 0 {
             let clamped = min(15.0, secs)
-            try? await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
+            do {
+                try await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))
+            } catch {
+                return (false, "Bekleme iptal edildi.")
+            }
+            if Task.isCancelled { return (false, "Bekleme iptal edildi.") }
             let snap = await buildDOMSnapshot(maxTextChars: 2000)
             lastSnapshotSummary = snap
             appendLog("⏱️ [\(agentName)] Beklendi: \(clamped) sn")
@@ -513,6 +549,7 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
             const hasPassword = Boolean(document.querySelector('input[type="password"]'));
             const hasChallenge = Boolean(document.querySelector('iframe[src*="captcha"], iframe[src*="turnstile"], #cf-challenge-running, .g-recaptcha, .h-captcha'));
 
+            document.querySelectorAll('[data-claw-ref]').forEach(el => el.removeAttribute('data-claw-ref'));
             const selector = 'a[href], button, input:not([type="hidden"]), select, textarea, [role="button"], [role="link"], [role="textbox"], [role="combobox"], [role="menuitem"]';
             const nodes = Array.from(document.querySelectorAll(selector));
             const items = [];
@@ -622,8 +659,11 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
     function clawFindTarget(t) {
         if (!t) return null;
         if (t.startsWith('@e')) {
-            const byRef = document.querySelector('[data-claw-ref="' + t + '"]');
-            if (byRef) return byRef;
+            try {
+                const esc = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(t) : t.replace(/["\\\\]/g, '\\\\$&');
+                const byRef = document.querySelector('[data-claw-ref="' + esc + '"]');
+                if (byRef) return byRef;
+            } catch (_) {}
         }
         try {
             const byCss = document.querySelector(t);
@@ -643,18 +683,26 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
 
     private func performNavigation(timeoutSeconds: TimeInterval, trigger: @escaping () -> Void) async -> Result<Void, Error> {
         finishPendingNavigation(with: .failure(CancellationError()))
-        return await withCheckedContinuation { cont in
-            self.navContinuation = cont
-            let work = DispatchWorkItem { [weak self] in
-                self?.finishPendingNavigation(with: .failure(NSError(
-                    domain: "BrowserAutomation",
-                    code: NSURLErrorTimedOut,
-                    userInfo: [NSLocalizedDescriptionKey: "Sayfa yükleme zaman aşımı (\(Int(timeoutSeconds)) sn)."]
-                )))
+        if Task.isCancelled { return .failure(CancellationError()) }
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { cont in
+                self.navContinuation = cont
+                let work = DispatchWorkItem { [weak self] in
+                    self?.finishPendingNavigation(with: .failure(NSError(
+                        domain: "BrowserAutomation",
+                        code: NSURLErrorTimedOut,
+                        userInfo: [NSLocalizedDescriptionKey: "Sayfa yükleme zaman aşımı (\(Int(timeoutSeconds)) sn)."]
+                    )))
+                }
+                self.navTimeoutWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: work)
+                trigger()
             }
-            self.navTimeoutWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds, execute: work)
-            trigger()
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.webView.stopLoading()
+                self?.finishPendingNavigation(with: .failure(CancellationError()))
+            }
         }
     }
 
@@ -668,7 +716,7 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url else {
+        guard webView === self.webView, let url = navigationAction.request.url else {
             decisionHandler(.cancel)
             return
         }
@@ -688,14 +736,17 @@ final class BrowserAutomationService: NSObject, ObservableObject, WKNavigationDe
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === self.webView else { return }
         self.finishPendingNavigation(with: .success(()))
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         self.finishPendingNavigation(with: .failure(error))
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard webView === self.webView else { return }
         self.finishPendingNavigation(with: .failure(error))
     }
 

@@ -361,6 +361,14 @@ struct EvolutionAndProjectView: View {
             cachedDiffs.removeAll()
             refreshDetectedBuildCommand()
         }
+        .onChange(of: engine.workspaceRefreshNonce) { _, _ in
+            cachedDiffs.removeAll()
+        }
+        .onChange(of: engine.customBuildCommand) { _, newVal in
+            if customBuildDraft != newVal {
+                customBuildDraft = newVal
+            }
+        }
         .task(id: customBuildDraft) {
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled else { return }

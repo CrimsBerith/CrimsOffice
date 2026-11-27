@@ -246,7 +246,8 @@ private struct ArticulatedChibiWalkerCanvas: View {
     private var isBusy: Bool { status.isBusy }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion)) { timeline in
+        let shouldAnimate = !reduceMotion && (isWalking || isBusy || status == .chatting || status == .collaborating || status == .improving || status == .error)
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !shouldAnimate)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             let walkCycle = (t + phaseOffset) * 9.2
             let idleCycle = (t + phaseOffset) * 2.2

@@ -12,7 +12,8 @@ struct OfficeFloorView: View {
     @State private var isRebuilding = false
     @State private var showWorkspacePopover = false
     @State private var showEditsPopover = false
-    @State private var selectedEditForDiff: FileEditRecord? = nil
+    @State private var selectedEditForDiffId: UUID? = nil
+    @State private var cachedDiffPreview: (id: UUID, lines: [String])? = nil
     @State private var workspaceVerifyStatus: String = ""
     @State private var isRunningQuickVerify = false
     @State private var walkDestinationMarker: (point: CGPoint, accentHex: String, id: UUID)? = nil
@@ -256,7 +257,7 @@ struct OfficeFloorView: View {
                         if !engine.fileEdits.isEmpty {
                             let activeEditCount = engine.fileEdits.filter { !$0.rolledBack }.count
                             Button {
-                                if selectedEditForDiff == nil { selectedEditForDiff = engine.fileEdits.first }
+                                if selectedEditForDiffId == nil { selectedEditForDiffId = engine.fileEdits.first?.id }
                                 showEditsPopover.toggle()
                             } label: {
                                 HStack(spacing: 4) {
@@ -548,7 +549,7 @@ struct OfficeFloorView: View {
                             } else {
                                 if !rec.backupPath.isEmpty {
                                     Button("Diff") {
-                                        selectedEditForDiff = rec
+                                        selectedEditForDiffId = rec.id
                                     }
                                     .buttonStyle(.borderless)
                                     .font(.system(size: 10, weight: .semibold))
@@ -563,7 +564,7 @@ struct OfficeFloorView: View {
                         }
                         .padding(.horizontal, 8).padding(.vertical, 5)
                         .background(
-                            (selectedEditForDiff?.id == rec.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)),
+                            (selectedEditForDiffId == rec.id ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)),
                             in: RoundedRectangle(cornerRadius: 8)
                         )
                     }
@@ -571,11 +572,9 @@ struct OfficeFloorView: View {
             }
             .frame(maxHeight: 165)
 
-            if let diffRec = selectedEditForDiff, !diffRec.backupPath.isEmpty {
-                let currentURL = PowerShellTools.resolveSafeURL(diffRec.relativePath, workspacePath: engine.workspacePath)
-                let newText = currentURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
-                let oldText = (try? String(contentsOfFile: diffRec.backupPath, encoding: .utf8)) ?? ""
-                let diffLines = LineDiffUtility.unifiedDiff(oldText: oldText, newText: newText, maxLines: 32)
+            if let diffId = selectedEditForDiffId,
+               let diffRec = engine.fileEdits.first(where: { $0.id == diffId && !$0.rolledBack && !$0.backupPath.isEmpty }) {
+                let diffLines = (cachedDiffPreview?.id == diffId) ? (cachedDiffPreview?.lines ?? ["Yükleniyor..."]) : ["Diff hesaplanıyor..."]
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Diff Önizleme: \(diffRec.relativePath)")
                         .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -589,6 +588,18 @@ struct OfficeFloorView: View {
                     .frame(maxHeight: 120)
                     .padding(6)
                     .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+                }
+                .task(id: "\(diffId.uuidString)-\(engine.workspaceRefreshNonce)") {
+                    let ws = engine.workspacePath
+                    let rel = diffRec.relativePath
+                    let bkp = diffRec.backupPath
+                    let computed = await Task.detached(priority: .userInitiated) { () -> [String] in
+                        let currentURL = PowerShellTools.resolveSafeURL(rel, workspacePath: ws)
+                        let newText = currentURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+                        let oldText = (try? String(contentsOfFile: bkp, encoding: .utf8)) ?? ""
+                        return LineDiffUtility.unifiedDiff(oldText: oldText, newText: newText, maxLines: 32)
+                    }.value
+                    cachedDiffPreview = (diffId, computed)
                 }
             }
         }
@@ -1054,6 +1065,9 @@ struct OfficeFloorView: View {
                         .liquidGlassCard(cornerRadius: 8, tint: isSelected ? Color(hex: agent.accentHex) : nil, interactive: true)
                     }
                     .position(x: pt.x, y: pt.y - 6)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(agent.name), \(agent.title)")
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
                     .onTapGesture(count: 2) {
                         engine.selectedAgentId = agent.id
                         engine.moveAgent(
@@ -1214,6 +1228,7 @@ struct OfficeFloorView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(planExpanded ? "Planı daralt" : "Planı genişlet")
                 if engine.activeBusyCount == 0 {
                     Button {
                         withAnimation { engine.clearPlan() }
@@ -1223,13 +1238,14 @@ struct OfficeFloorView: View {
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Plan panosunu temizle")
                     .help("Plan panosunu temizle")
                 }
             }
 
             if planExpanded {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8)], spacing: 5) {
+                    LazyVGrid(columns: [GridItem(.flexible(minimum: 140), spacing: 6)], spacing: 5) {
                         ForEach(Array(engine.planTasks.enumerated()), id: \.element.id) { idx, t in
                             HStack(spacing: 6) {
                                 Image(systemName: taskIconName(for: t.status))

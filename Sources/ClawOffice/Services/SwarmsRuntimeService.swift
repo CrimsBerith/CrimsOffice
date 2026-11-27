@@ -422,7 +422,7 @@ enum SwarmsRuntimeService {
             } else if let best = orderedProviders.first {
                 primary = best
             } else {
-                primary = assigned ?? providers.first ?? APIProviderConfig(name: "Antigravity CLI", kind: .antigravityCLI, baseURL: "")
+                primary = assigned ?? providers.first(where: { $0.kind != .antigravityCLI }) ?? APIProviderConfig.defaultProviders().first(where: { $0.kind == .evren }) ?? APIProviderConfig(name: "EVREN (SAYZEK)", kind: .evren, baseURL: "https://evren-llmapi.ssyz.org.tr/v1")
             }
 
             // Pick a healthy non-cooled, non-busy model from `primary` when its configured model is unusable

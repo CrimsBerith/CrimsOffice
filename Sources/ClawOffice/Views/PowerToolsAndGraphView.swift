@@ -340,6 +340,12 @@ struct GraphCanvasView: View {
                             }
                         }
                 )
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { scale in
+                            zoomScale = min(2.2, max(0.6, scale))
+                        }
+                )
 
                 HStack(spacing: 6) {
                     if let sid = selectedNodeId, let node = subset.first(where: { $0.id == sid }) {
@@ -352,13 +358,25 @@ struct GraphCanvasView: View {
                     Spacer()
                     Button { zoomScale = max(0.6, zoomScale - 0.2) } label: {
                         Image(systemName: "minus.magnifyingglass").font(.system(size: 10))
-                    }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .accessibilityLabel("Grafiği uzaklaştır")
+                    .help("Grafiği uzaklaştır")
                     Button { zoomScale = 1.0; panOffset = .zero; dragBaseOffset = .zero } label: {
                         Image(systemName: "arrow.counterclockwise").font(.system(size: 10))
-                    }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .accessibilityLabel("Grafiği sıfırla")
+                    .help("Yakınlaştırma ve konumu sıfırla")
                     Button { zoomScale = min(2.2, zoomScale + 0.2) } label: {
                         Image(systemName: "plus.magnifyingglass").font(.system(size: 10))
-                    }.buttonStyle(.plain).foregroundStyle(.white.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .accessibilityLabel("Grafiği yakınlaştır")
+                    .help("Grafiği yakınlaştır")
                 }
                 .padding(8)
             }

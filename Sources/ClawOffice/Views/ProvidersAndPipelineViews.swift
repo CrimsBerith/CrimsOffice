@@ -253,7 +253,9 @@ struct ProviderCard: View {
                     if !c.isEmpty && !draft.models.contains(c) {
                         draft.models.insert(c, at: 0); draft.defaultModel = c; newModel = ""; _ = commitSave()
                     }
-                }.liquidGlassButton(prominent: false)
+                }
+                .liquidGlassButton(prominent: false)
+                .disabled(newModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             if !draft.uniqueModels.isEmpty {
@@ -709,10 +711,15 @@ struct ActivityLogView: View {
         var lines = ["timestamp,level,source,message"]
         let formatter = ISO8601DateTimeFormatter()
         func csvEscape(_ raw: String) -> String {
-            raw
+            var s = raw
                 .replacingOccurrences(of: "\"", with: "\"\"")
                 .replacingOccurrences(of: "\r\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
                 .replacingOccurrences(of: "\n", with: " ")
+            if let first = s.first, ["=", "+", "-", "@"].contains(first) {
+                s = "'" + s
+            }
+            return s
         }
         for entry in logs {
             let timestamp = formatter.string(from: entry.timestamp)
@@ -834,7 +841,7 @@ struct ActivityLogView: View {
                                     .padding(.horizontal, 6).padding(.vertical, 2)
                                     .liquidGlassCapsule(tint: levelColor(e.level), interactive: false)
                                     .foregroundStyle(levelColor(e.level))
-                                    .frame(width: 62)
+                                    .fixedSize(horizontal: true, vertical: false)
                                 Text(e.source)
                                     .font(.caption.bold())
                                     .frame(width: 115, alignment: .leading)

@@ -486,6 +486,39 @@ class SwarmsBridgeTests(unittest.TestCase):
         finally:
             sb.RUNTIME_TRACKER.clear()
 
+    def test_auth_enforced_on_runs_cancel_and_mcp_notifications(self) -> None:
+        sb.RUNTIME_TRACKER.clear()
+        try:
+            with patch.dict("os.environ", {"SWARMS_AUTH_TOKEN": "top-secret-token"}):
+                unauth_runs = self.client.get("/v1/swarm/runs")
+                self.assertEqual(unauth_runs.status_code, 401)
+                unauth_cancel = self.client.post("/v1/swarm/cancel/does-not-exist")
+                self.assertEqual(unauth_cancel.status_code, 401)
+                auth_runs = self.client.get(
+                    "/v1/swarm/runs",
+                    headers={"Authorization": "Bearer top-secret-token"},
+                )
+                self.assertEqual(auth_runs.status_code, 200)
+
+            notif = self.client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {}},
+            )
+            self.assertEqual(notif.status_code, 202)
+            bad_swarm_call = self.client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {"name": "swarm_run", "arguments": {"task": "hello", "max_loops": "not-an-int"}},
+                },
+            )
+            self.assertEqual(bad_swarm_call.status_code, 200)
+            self.assertEqual(bad_swarm_call.json()["error"]["code"], -32602)
+        finally:
+            sb.RUNTIME_TRACKER.clear()
+
 
 if __name__ == "__main__":
     unittest.main()

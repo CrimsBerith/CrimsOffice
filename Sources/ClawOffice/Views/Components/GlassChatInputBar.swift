@@ -45,7 +45,7 @@ struct GlassChatInputBar: View {
                         if press.modifiers.contains(.shift) {
                             return .ignored
                         }
-                        if isBusy && !press.modifiers.contains(.command) {
+                        if isBusy {
                             return .handled
                         }
                         if submitNow() {
