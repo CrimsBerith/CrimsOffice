@@ -2233,4 +2233,99 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         XCTAssertTrue(prompt.contains("[GRAPHIFY BİLGİ GRAFI ÖZETİ]"))
         XCTAssertTrue(prompt.contains("CAVEMAN") || prompt.contains("Caveman"))
     }
+
+    func testSSEWatchdogRejectsInfiniteEmptyDataHeartbeatsAndCompactorEnforcesTightBudget() async throws {
+        // 1. Strict aggregate budget check in ContextCompactor under tight overflow recovery
+        let filler = String(repeating: "Ajan kod ve log analizi yapıyor. ", count: 65) // ~2145 chars each
+        let heavyHistory = (0..<12).map { idx in
+            ChatMessage(role: idx % 2 == 0 ? "user" : "assistant", content: "Mesaj \(idx): \(filler)")
+        }
+        let tightRes = ContextCompactor.compactHistory(heavyHistory, charBudget: 5_500, keepRecentCount: 10, force: true)
+        XCTAssertTrue(tightRes.didCompact)
+        XCTAssertLessThanOrEqual(tightRes.finalCharCount, 6_800, "Compactor must strictly constrain multi-message overflow tail")
+        XCTAssertTrue(tightRes.messages.last?.content.contains("Mesaj 11:") == true, "Final turn must stay intact")
+
+        // 2. Hung SSE stream sending endless empty data: {} keepalive chunks must still trip firstTokenTimeout
+        let portURL = tmpRoot.appendingPathComponent("ping_port.txt")
+        let scriptURL = tmpRoot.appendingPathComponent("ping_server.py")
+        let script = """
+        import http.server, os, socketserver, time
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                try:
+                    for _ in range(20):
+                        self.wfile.write(b'data: {"choices":[{"delta":{}}]}\\n\\n')
+                        self.wfile.flush()
+                        time.sleep(0.45)
+                except Exception:
+                    pass
+
+        class ThreadedServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+            daemon_threads = True
+
+        srv = ThreadedServer(("127.0.0.1", 0), Handler)
+        tmp = \(String(reflecting: portURL.path + ".tmp"))
+        with open(tmp, "w") as f:
+            f.write(str(srv.server_port))
+        os.replace(tmp, \(String(reflecting: portURL.path)))
+        srv.serve_forever()
+        """
+        try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        proc.arguments = [scriptURL.path]
+        try proc.run()
+        defer {
+            if proc.isRunning {
+                proc.terminate()
+                proc.waitUntilExit()
+            }
+        }
+
+        var port: Int? = nil
+        for _ in 0..<50 {
+            if let s = try? String(contentsOf: portURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+               let p = Int(s) {
+                port = p
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let resolvedPort = try XCTUnwrap(port)
+
+        let pingProv = APIProviderConfig(
+            name: "HungPingProvider",
+            kind: .custom,
+            baseURL: "http://127.0.0.1:\(resolvedPort)/v1",
+            apiKey: "",
+            authStyle: .none,
+            models: ["test-model"],
+            defaultModel: "test-model"
+        )
+        let started = Date()
+        do {
+            _ = try await LLMClient.shared.streamChat(
+                provider: pingProv,
+                model: "test-model",
+                systemPrompt: "Test",
+                messages: [ChatMessage(role: "user", content: "Ping")],
+                temperature: 0.1,
+                stream: true,
+                streamTimeouts: (firstToken: 1.8, interChunk: 1.5),
+                onDelta: { _ in }
+            )
+            XCTFail("Expected empty heartbeat flood to time out on firstTokenTimeout")
+        } catch {
+            let elapsed = Date().timeIntervalSince(started)
+            XCTAssertLessThan(elapsed, 6.0, "Empty data: {} heartbeats masked stall timeout (\(elapsed)s)")
+        }
+    }
 }

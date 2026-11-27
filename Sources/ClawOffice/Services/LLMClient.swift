@@ -393,12 +393,20 @@ final class LLMClient: Sendable {
         private let lock = NSLock()
         private var lastActivityAt = Date()
         private var hasReceivedPayload = false
+        private var initialHeaderRecorded = false
 
         func recordActivity(isContentDelta: Bool) {
             lock.lock()
-            lastActivityAt = Date()
             if isContentDelta {
+                lastActivityAt = Date()
                 hasReceivedPayload = true
+            } else if !initialHeaderRecorded {
+                // Record HTTP header arrival once; subsequent empty keepalive frames must NOT reset first-token timeout
+                initialHeaderRecorded = true
+                lastActivityAt = Date()
+            } else if hasReceivedPayload {
+                // Only extend inter-chunk idle window for real metadata/usage frames once content already started
+                lastActivityAt = Date()
             }
             lock.unlock()
         }
@@ -1268,7 +1276,6 @@ final class LLMClient: Sendable {
 
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
-            let exitOnce = FlagBox()
             let timedOutBox = FlagBox()
             let stalledBox = FlagBox()
             let lastCLILineLock = NSLock()
@@ -1301,29 +1308,63 @@ final class LLMClient: Sendable {
                 }
             }
 
-            defer {
-                timer.cancel()
-                stallTimer.cancel()
-                holder.terminate()
-                try? outPipe.fileHandleForReading.close()
-                try? errPipe.fileHandleForReading.close()
-            }
+            final class TerminationBox: @unchecked Sendable {
+                private let lock = NSLock()
+                private var exitCode: Int32? = nil
+                private var waiter: CheckedContinuation<Int32, Never>? = nil
 
-            let exitStatusTask = Task.detached(priority: .utility) { () -> Int32 in
-                await withCheckedContinuation { cont in
-                    p.terminationHandler = { finishedProc in
-                        if exitOnce.compareAndSetTrue() {
-                            cont.resume(returning: finishedProc.terminationStatus)
-                        }
+                func complete(_ status: Int32) {
+                    lock.lock()
+                    if exitCode == nil {
+                        exitCode = status
                     }
-                    if !p.isRunning && exitOnce.compareAndSetTrue() {
-                        cont.resume(returning: p.terminationStatus)
+                    let cont = waiter
+                    waiter = nil
+                    let code = exitCode ?? status
+                    lock.unlock()
+                    cont?.resume(returning: code)
+                }
+
+                func wait() async -> Int32 {
+                    await withCheckedContinuation { cont in
+                        lock.lock()
+                        if let code = exitCode {
+                            lock.unlock()
+                            cont.resume(returning: code)
+                        } else {
+                            waiter = cont
+                            lock.unlock()
+                        }
                     }
                 }
             }
 
-            try p.run()
+            let termBox = TerminationBox()
+            p.terminationHandler = { finishedProc in
+                termBox.complete(finishedProc.terminationStatus)
+            }
+
+            var errTask: Task<String, Never>? = nil
+            defer {
+                timer.cancel()
+                stallTimer.cancel()
+                holder.terminate()
+                errTask?.cancel()
+                try? outPipe.fileHandleForReading.close()
+                try? errPipe.fileHandleForReading.close()
+            }
+
+            do {
+                try p.run()
+            } catch {
+                p.terminationHandler = nil
+                termBox.complete(-1)
+                throw error
+            }
             holder.set(p)
+            if !p.isRunning {
+                termBox.complete(p.terminationStatus)
+            }
             touchCLIActivity()
             timer.resume()
             stallTimer.resume()
@@ -1332,10 +1373,11 @@ final class LLMClient: Sendable {
                 throw CancellationError()
             }
 
-            let errTask = Task.detached(priority: .utility) { () -> String in
+            let startedErrTask = Task.detached(priority: .utility) { () -> String in
                 let data = errPipe.fileHandleForReading.readDataToEndOfFile()
                 return String(decoding: data.prefix(16_384), as: UTF8.self)
             }
+            errTask = startedErrTask
 
             var fullContent = ""
             var resultResponse: String? = nil
@@ -1478,8 +1520,8 @@ final class LLMClient: Sendable {
                 }
             }
 
-            let exitStatus = await exitStatusTask.value
-            let errText = await errTask.value
+            let exitStatus = await termBox.wait()
+            let errText = await startedErrTask.value
 
             try Task.checkCancellation()
 

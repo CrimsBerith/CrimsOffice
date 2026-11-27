@@ -347,16 +347,34 @@ enum ContextCompactor: Sendable {
         var total = estimatedChars(of: result)
         guard total > remainingBudget else { return result }
 
-        // Trim oldest-first inside `recent`, preserving the final message as intact as possible.
+        // Pass 1: clip oversized messages individually, keeping final message generous
         for i in result.indices {
             if total <= remainingBudget { break }
             let isLast = (i == result.count - 1)
-            let cap = isLast ? max(3000, remainingBudget / 2) : 2200
+            let cap = isLast ? max(2000, remainingBudget / 2) : 1600
             if result[i].content.count > cap {
                 let oldLen = result[i].content.count
                 result[i].content = clipMiddleText(result[i].content, maxChars: cap)
                 total -= max(0, oldLen - result[i].content.count)
             }
+        }
+
+        // Pass 2: if aggregate size still exceeds budget, shrink older messages harder (down to 420 chars)
+        if total > remainingBudget {
+            for i in result.indices.dropLast() {
+                if total <= remainingBudget { break }
+                if result[i].content.count > 420 {
+                    let oldLen = result[i].content.count
+                    result[i].content = clipMiddleText(result[i].content, maxChars: 420)
+                    total -= max(0, oldLen - result[i].content.count)
+                }
+            }
+        }
+
+        // Pass 3: drop oldest non-final turns if many recent messages keep aggregate over tight overflow budget
+        while total > remainingBudget && result.count > 2 {
+            result.removeFirst()
+            total = estimatedChars(of: result)
         }
         return result
     }
