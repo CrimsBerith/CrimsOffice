@@ -2474,4 +2474,72 @@ final class ClawOfficeAutonomousTests: XCTestCase {
         let failRes = await PowerShellTools.runCommand("echo hi", workspacePath: "/nonexistent-claw-dir-\(UUID().uuidString)")
         XCTAssertFalse(failRes.succeeded)
     }
+
+    @MainActor
+    func testDiverseHiringRebalancingAndSwarmsBatchSpread() throws {
+        let evren = APIProviderConfig(
+            name: "EVREN", kind: .evren, baseURL: "https://evren.example/v1", apiKey: "k1",
+            models: ["deepseek-v4.1-flash", "glm-5.3", "qwen3.8-flash-next", "gemma-4-31b"],
+            defaultModel: "deepseek-v4.1-flash"
+        )
+        let kilo = APIProviderConfig(
+            name: "Kilo", kind: .kilo, baseURL: "https://kilo.example/v1", apiKey: "k2",
+            models: ["kilo-auto/free", "nvidia/nemotron-3-ultra-550b-a55b:free", "google/gemma-4-26b-a4b-it:free"],
+            defaultModel: "kilo-auto/free"
+        )
+        let groq = APIProviderConfig(
+            name: "Groq", kind: .groq, baseURL: "https://groq.example/v1", apiKey: "k3",
+            models: ["llama-3.3-70b-versatile"],
+            defaultModel: "llama-3.3-70b-versatile"
+        )
+        let openRouter = APIProviderConfig(
+            name: "OpenRouter", kind: .openRouter, baseURL: "https://openrouter.example/v1", apiKey: "k4",
+            models: ["qwen/qwen-2.5-coder-32b-instruct:free", "deepseek/deepseek-r1:free"],
+            defaultModel: "qwen/qwen-2.5-coder-32b-instruct:free"
+        )
+
+        let engine = OfficeEngine(
+            persistConfig: false,
+            customWorkspacePath: tmpWorkspace.path,
+            customOpenClawHome: tmpOpenClaw.path,
+            customProviders: [evren, kilo, groq, openRouter],
+            customAgents: []
+        )
+
+        // 1. Consecutive hires in similar coding roles must diversify models & providers instead of repeating the same model
+        let h1 = engine.hireAgent(name: "Coder1", title: "Swift Developer", emoji: "⚡", modelId: "auto", systemPrompt: "Write Swift")
+        let h2 = engine.hireAgent(name: "Coder2", title: "Swift Engineer", emoji: "🔧", modelId: "auto", systemPrompt: "Develop modules")
+        let h3 = engine.hireAgent(name: "Auditor1", title: "Security QA", emoji: "🛡️", modelId: "auto", systemPrompt: "Security audit")
+        let h4 = engine.hireAgent(name: "DevOps1", title: "DevOps Engineer", emoji: "🚀", modelId: "auto", systemPrompt: "CI build")
+        let hiredModels = [h1.agent?.modelId, h2.agent?.modelId, h3.agent?.modelId, h4.agent?.modelId].compactMap { $0 }
+        XCTAssertEqual(hiredModels.count, 4)
+        XCTAssertGreaterThanOrEqual(Set(hiredModels).count, 3, "Sequential hires must not all collapse onto identical models")
+
+        let suggestions = engine.suggestedModelCandidates(name: "NewDev", title: "Backend Engineer", prompt: "Build APIs", limit: 6)
+        XCTAssertGreaterThanOrEqual(Set(suggestions.map(\.provider.id)).count, 2, "Top suggestions must span multiple active providers")
+
+        // 2. Duplicate agents piled onto identical EVREN model must redistribute when rebalanceAgentsToHealthyProviders runs
+        var clones: [OfficeAgent] = []
+        for idx in 1...4 {
+            clones.append(OfficeAgent(
+                name: "Clone\(idx)", title: "Developer", emoji: "🧱", avatarAsset: OfficeAvatarPreset.defaultAsset(forIndex: idx),
+                symbolName: "cpu", accentHex: "#E11D48", providerId: evren.id, modelId: "deepseek-v4.1-flash",
+                systemPrompt: "Develop Swift", deskPosition: Point2D(x: 0.2 * Double(idx), y: 0.4), currentPosition: Point2D(x: 0.2 * Double(idx), y: 0.4)
+            ))
+        }
+        engine.agents = clones
+        let msg = engine.rebalanceAgentsToHealthyProviders()
+        XCTAssertTrue(msg.contains("dengelendi"))
+        let uniqueAfterRebalance = Set(engine.agents.map { $0.modelId.lowercased() })
+        XCTAssertGreaterThanOrEqual(uniqueAfterRebalance.count, 3, "Rebalance must diversify duplicate model assignments")
+
+        // 3. SwarmsRuntimeService.buildAgentPayloads spreads same-model batch participants across distinct healthy routes
+        engine.agents = clones
+        let batchPayloads = SwarmsRuntimeService.buildAgentPayloads(
+            agents: engine.agents,
+            providers: [evren, kilo, groq, openRouter]
+        )
+        XCTAssertEqual(batchPayloads.count, 4)
+        XCTAssertGreaterThan(Set(batchPayloads.map { $0.modelName.lowercased() }).count, 1, "Concurrent Swarm payload builder must diversify identical models")
+    }
 }

@@ -1592,16 +1592,16 @@ struct OfficeAvatarPreset: Identifiable, Hashable, Sendable {
     var id: String { assetName }
 
     static let allPresets: [OfficeAvatarPreset] = [
-        OfficeAvatarPreset(assetName: "bikini_crimson", label: "Kızıl Hoodie · Lead", accentHex: "#E11D48"),
-        OfficeAvatarPreset(assetName: "bikini_cyan", label: "Turuncu Aloha · QA", accentHex: "#06B6D4"),
-        OfficeAvatarPreset(assetName: "bikini_mint", label: "Sarı Saç · Mimar", accentHex: "#10B981"),
-        OfficeAvatarPreset(assetName: "bikini_lavender", label: "Çiçekli · UI/UX", accentHex: "#A855F7"),
-        OfficeAvatarPreset(assetName: "bikini_gold", label: "Denim Gözlük · Analist", accentHex: "#F59E0B"),
-        OfficeAvatarPreset(assetName: "bikini_coral", label: "Mercan Bob · Frontend", accentHex: "#FB7185"),
-        OfficeAvatarPreset(assetName: "bikini_cobalt", label: "Kobalt Vizör · Sistem", accentHex: "#3B82F6"),
-        OfficeAvatarPreset(assetName: "bikini_rosegold", label: "Rose Gold · AI Lab", accentHex: "#EC4899"),
-        OfficeAvatarPreset(assetName: "bikini_ruby", label: "Yakut Siyah · Güvenlik", accentHex: "#DC2626"),
-        OfficeAvatarPreset(assetName: "bikini_emerald", label: "Zümrüt Hoodie · Cloud", accentHex: "#14B8A6")
+        OfficeAvatarPreset(assetName: "bikini_crimson", label: "LEGO Lead · Kızıl Şapka", accentHex: "#E11D48"),
+        OfficeAvatarPreset(assetName: "bikini_cyan", label: "LEGO QA · Turuncu Gözlük", accentHex: "#06B6D4"),
+        OfficeAvatarPreset(assetName: "bikini_mint", label: "LEGO Mimar · Sarı Saç", accentHex: "#10B981"),
+        OfficeAvatarPreset(assetName: "bikini_lavender", label: "LEGO UI/UX · Mor At Kuyruğu", accentHex: "#A855F7"),
+        OfficeAvatarPreset(assetName: "bikini_gold", label: "LEGO Analist · Baretle", accentHex: "#F59E0B"),
+        OfficeAvatarPreset(assetName: "bikini_coral", label: "LEGO Frontend · Mercan", accentHex: "#FB7185"),
+        OfficeAvatarPreset(assetName: "bikini_cobalt", label: "LEGO Sistem · Vizör Kask", accentHex: "#3B82F6"),
+        OfficeAvatarPreset(assetName: "bikini_rosegold", label: "LEGO AI Lab · İkili Saç", accentHex: "#EC4899"),
+        OfficeAvatarPreset(assetName: "bikini_ruby", label: "LEGO Güvenlik · Yakut", accentHex: "#DC2626"),
+        OfficeAvatarPreset(assetName: "bikini_emerald", label: "LEGO Cloud · Zümrüt Şapka", accentHex: "#14B8A6")
     ]
 
     static func defaultAsset(forIndex index: Int) -> String {

@@ -393,7 +393,7 @@ enum SwarmsRuntimeService {
             modelMetrics[ModelRouteKey(providerId: provId, modelId: modelId)]?.inFlightCount ?? 0
         }
 
-        let enabledConfigured = providers.filter { $0.isEnabled && $0.isConfigured }
+        let enabledConfigured = providers.filter { $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI }
         let orderedProviders = enabledConfigured.sorted { lhs, rhs in
             let lOnline = providerStatuses[lhs.id]?.isOnline != false && !isProviderCooled(lhs.id)
             let rOnline = providerStatuses[rhs.id]?.isOnline != false && !isProviderCooled(rhs.id)
@@ -404,13 +404,18 @@ enum SwarmsRuntimeService {
             return lhs.name < rhs.name
         }
 
-        return agents.map { agent in
-            let assigned = providers.first(where: { $0.id == agent.providerId && $0.isEnabled && $0.isConfigured })
+        var assignedModelsInBatch: Set<String> = []
+        var assignedProvidersInBatch: [UUID: Int] = [:]
+        var payloads: [SwarmsAgentPayload] = []
+        payloads.reserveCapacity(agents.count)
+
+        for agent in agents {
+            let assigned = providers.first(where: { $0.id == agent.providerId && $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI })
             let assignedHealthy = assigned.map { providerStatuses[$0.id]?.isOnline != false && !isProviderCooled($0.id) } ?? false
             let candidatePrimaryModel = agent.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // Promote a healthy online provider if the agent's assigned provider is offline, cooled, or unsupported
-            let primary: APIProviderConfig
+            // Promote a healthy online provider if the agent's assigned provider is offline, cooled, EVREN-saturated in this batch, or unsupported
+            var primary: APIProviderConfig
             if let assigned, assignedHealthy || orderedProviders.isEmpty {
                 if candidatePrimaryModel.isEmpty || providerSupportsModel(assigned, modelId: candidatePrimaryModel) {
                     primary = assigned
@@ -419,26 +424,50 @@ enum SwarmsRuntimeService {
                 } else {
                     primary = assigned
                 }
-            } else if let best = orderedProviders.first {
+            } else if let best = orderedProviders.first(where: { assignedProvidersInBatch[$0.id, default: 0] < 2 }) ?? orderedProviders.first {
                 primary = best
             } else {
                 primary = assigned ?? providers.first(where: { $0.kind != .antigravityCLI }) ?? APIProviderConfig.defaultProviders().first(where: { $0.kind == .evren }) ?? APIProviderConfig(name: "EVREN (SAYZEK)", kind: .evren, baseURL: "https://evren-llmapi.ssyz.org.tr/v1")
             }
 
-            // Pick a healthy non-cooled, non-busy model from `primary` when its configured model is unusable
+            // Avoid stacking >= 3 simultaneous swarm agents on EVREN when another healthy non-cooled provider has capacity
+            if primary.kind == .evren,
+               assignedProvidersInBatch[primary.id, default: 0] >= 2,
+               let altProvider = orderedProviders.first(where: {
+                   $0.id != primary.id
+                   && !isProviderCooled($0.id)
+                   && providerStatuses[$0.id]?.isOnline != false
+                   && assignedProvidersInBatch[$0.id, default: 0] < 2
+               }) {
+                primary = altProvider
+            }
+
+            // Pick a healthy non-cooled, non-busy, batch-distinct model when its configured model is unusable or collides in this batch
             var resolvedModel = candidatePrimaryModel
             if resolvedModel.isEmpty || !providerSupportsModel(primary, modelId: resolvedModel) {
                 resolvedModel = primary.defaultModel.isEmpty ? (primary.uniqueModels.first ?? "deepseek-v4.1-flash") : primary.defaultModel
             }
-            if isModelCooled(primary.id, resolvedModel) || inFlight(primary.id, resolvedModel) > 0 {
-                if let idleBetter = (agent.fallbackModelIds + primary.uniqueModels).first(where: { m in
+            let modelNeedsDiversification = assignedModelsInBatch.contains(resolvedModel.lowercased())
+            if isModelCooled(primary.id, resolvedModel) || inFlight(primary.id, resolvedModel) > 0 || modelNeedsDiversification {
+                let candidates = agent.fallbackModelIds + primary.uniqueModels.filter { ModelRouter.isChatCapableModel($0) }
+                if let idleUnique = candidates.first(where: { m in
                     providerSupportsModel(primary, modelId: m)
                         && !isModelCooled(primary.id, m)
                         && inFlight(primary.id, m) == 0
+                        && !assignedModelsInBatch.contains(m.lowercased())
                 }) {
-                    resolvedModel = idleBetter
+                    resolvedModel = idleUnique
+                } else if isModelCooled(primary.id, resolvedModel) || inFlight(primary.id, resolvedModel) > 0,
+                          let idleFallback = candidates.first(where: { m in
+                              providerSupportsModel(primary, modelId: m)
+                                  && !isModelCooled(primary.id, m)
+                                  && inFlight(primary.id, m) == 0
+                          }) {
+                    resolvedModel = idleFallback
                 }
             }
+            assignedModelsInBatch.insert(resolvedModel.lowercased())
+            assignedProvidersInBatch[primary.id, default: 0] += 1
 
             // Build intra-provider fallbacks strictly validated against `primary`'s model catalog
             var primaryFallbacks: [String] = []
@@ -490,7 +519,7 @@ enum SwarmsRuntimeService {
                 return makeProviderPayload(fbP, overrideModel: preferredFBModel, fallbackModels: backupModels)
             }
 
-            return SwarmsAgentPayload(
+            payloads.append(SwarmsAgentPayload(
                 name: agent.name,
                 title: agent.title,
                 systemPrompt: agent.systemPrompt,
@@ -500,8 +529,9 @@ enum SwarmsRuntimeService {
                 provider: makeProviderPayload(primary, overrideModel: resolvedModel, fallbackModels: primaryFallbacks),
                 fallbackProvider: fbPayloads.first,
                 fallbackProviders: fbPayloads
-            )
+            ))
         }
+        return payloads
     }
 
     static func inferSwarmRole(for agent: OfficeAgent) -> String {

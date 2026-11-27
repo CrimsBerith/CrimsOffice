@@ -65,7 +65,9 @@ struct ProvidersSettingsView: View {
                         }
                     }
 
-                    ForEach(engine.providers) { prov in
+                    let activeProviders = engine.providers.filter { !($0.kind == .antigravityCLI && !$0.isEnabled) }
+                    let policyDisabledProviders = engine.providers.filter { $0.kind == .antigravityCLI && !$0.isEnabled }
+                    ForEach(activeProviders) { prov in
                         ProviderCard(
                             provider: prov,
                             healthStatus: engine.providerStatuses[prov.id],
@@ -78,6 +80,25 @@ struct ProvidersSettingsView: View {
                             onEvrenQuota: { run(prov.id) { await engine.checkEvrenQuota(for: prov.id) } },
                             onDelete: prov.kind == .custom ? { engine.deleteProvider(id: prov.id) } : nil
                         )
+                    }
+                    if !policyDisabledProviders.isEmpty {
+                        DisclosureGroup("Politika Gereği Devre Dışı (\(policyDisabledProviders.count))") {
+                            ForEach(policyDisabledProviders) { prov in
+                                HStack {
+                                    Image(systemName: prov.kind.symbolName).foregroundStyle(.secondary)
+                                    Text(prov.name).font(.callout).foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text("Devre Dışı")
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 8).padding(.vertical, 3)
+                                        .liquidGlassCapsule(tint: .gray, interactive: false)
+                                }
+                                .padding(10)
+                                .liquidGlassCard(cornerRadius: 12)
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                     }
                 }.padding(22)
             }
@@ -558,6 +579,30 @@ struct MultiAgentTaskView: View {
                     .padding(14)
                     .liquidGlassCard(cornerRadius: 16, tint: .indigo)
 
+                    HStack(spacing: 8) {
+                        Text("Katılımcı LEGO Ajanlar (\(selected.count)/\(engine.agents.count))")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Tümü") {
+                            selected = Set(engine.agents.map(\.id))
+                        }
+                        .liquidGlassButton(prominent: false)
+                        .controlSize(.mini)
+
+                        Button("Akıllı 4'lü") {
+                            selected = Set(engine.agents.prefix(4).map(\.id))
+                        }
+                        .liquidGlassButton(prominent: false)
+                        .controlSize(.mini)
+
+                        Button("Temizle") {
+                            selected.removeAll()
+                        }
+                        .liquidGlassButton(prominent: false)
+                        .controlSize(.mini)
+                    }
+
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 225))], spacing: 10) {
                         ForEach(engine.agents) { a in
                             let on = selected.contains(a.id)
@@ -567,7 +612,7 @@ struct MultiAgentTaskView: View {
                                 if on { selected.remove(a.id) } else { selected.insert(a.id) }
                             } label: {
                                 HStack(spacing: 10) {
-                                    AgentAvatarView(agent: a, size: 32, showStatusDot: false)
+                                    AgentAvatarView(agent: a, size: 34, showStatusDot: true)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text("\(a.emoji) \(a.name)").bold().font(.subheadline)
                                         Text(a.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -605,6 +650,72 @@ struct MultiAgentTaskView: View {
                         }
                         .padding(12)
                         .liquidGlassCard(cornerRadius: 14, tint: engine.isRunningPipeline ? .accentColor : nil)
+                    }
+
+                    if let tel = engine.lastSwarmsTelemetry,
+                       (!tel.usedRoutes.isEmpty || !tel.failedCandidates.isEmpty) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Swarms Rota & Devralma Telemetrisi")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 6) {
+                                    ForEach(Array(tel.usedRoutes.enumerated()), id: \.offset) { _, r in
+                                        HStack(spacing: 4) {
+                                            Circle().fill(r.usedFallback ? Color.cyan : Color.green).frame(width: 6, height: 6)
+                                            Text("\(r.providerName): \(r.modelName)\(r.usedFallback ? " (Yedek)" : "")")
+                                                .font(.system(size: 10, design: .monospaced))
+                                        }
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .liquidGlassCapsule(tint: r.usedFallback ? .cyan : .green, interactive: false)
+                                    }
+                                    ForEach(Array(tel.failedCandidates.enumerated()), id: \.offset) { _, f in
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "exclamationmark.triangle.fill")
+                                                .font(.system(size: 9))
+                                                .foregroundStyle(.orange)
+                                            Text("\(f.providerName)/\(f.modelName)")
+                                                .font(.system(size: 10, design: .monospaced))
+                                        }
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .liquidGlassCapsule(tint: .orange, interactive: false)
+                                        .help(f.error)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(12)
+                        .liquidGlassCard(cornerRadius: 14, tint: .teal)
+                    }
+
+                    if !engine.swarmsRecentRuns.isEmpty {
+                        DisclosureGroup("Son Swarms Çalışmaları (\(engine.swarmsRecentRuns.count))") {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(engine.swarmsRecentRuns.prefix(6)) { run in
+                                    HStack(spacing: 8) {
+                                        Circle()
+                                            .fill(run.status == "completed" ? Color.green : Color.orange)
+                                            .frame(width: 7, height: 7)
+                                        Text(run.swarmType)
+                                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        Text(run.taskPreview)
+                                            .font(.caption)
+                                            .lineLimit(1)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Text("\(run.stepCount) adım · \(run.durationMs)ms")
+                                            .font(.system(size: 9.5, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 8).padding(.vertical, 5)
+                                    .liquidGlassCard(cornerRadius: 9)
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(12)
+                        .liquidGlassCard(cornerRadius: 14, tint: .indigo)
                     }
 
                     ForEach(Array(engine.lastPipelineOutputs.enumerated()), id: \.offset) { idx, item in

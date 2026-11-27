@@ -279,7 +279,7 @@ struct OfficeFloorView: View {
                             statusPill("\(git.branch)\(git.dirtyCount > 0 ? " (\(git.dirtyCount))" : "")", active: true, color: git.dirtyCount > 0 ? .yellow : .mint)
                         }
 
-                        ForEach(engine.providers) { p in
+                        ForEach(engine.providers.filter { $0.isEnabled && $0.kind != .antigravityCLI }) { p in
                             let health = engine.providerStatuses[p.id]
                             let tintCol: Color = health != nil ? (health!.isOnline ? .green : .red) : (p.isConfigured ? .blue : .gray)
                             Button {
@@ -302,6 +302,22 @@ struct OfficeFloorView: View {
                             .buttonStyle(.plain)
                             .help("Sağlık kontrolü: \(health?.statusMessage ?? "Tıkla ve test et")")
                         }
+
+                        Button {
+                            _ = engine.rebalanceAgentsToHealthyProviders()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                    .font(.system(size: 9.5, weight: .semibold))
+                                    .foregroundStyle(.mint)
+                                Text("Modelleri Dengele")
+                                    .font(.system(size: 10, weight: .semibold))
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4.5)
+                            .liquidGlassCapsule(tint: .mint, interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Tüm ajanları sağlıklı ve birbirinden farklı modeller/sağlayıcılar üzerine dengeler")
                     }
                 }
             }
@@ -1002,8 +1018,17 @@ struct OfficeFloorView: View {
                     let depthScale = CGFloat(0.90 + min(max(livePos.y, 0.0), 1.0) * 0.16)
                     let spriteHeight = (isSelected ? 78.0 : 68.0) * depthScale
 
+                    let isQuietDefaultBubble = !isSelected
+                        && !isWalking
+                        && !agent.status.isBusy
+                        && agent.status == .idle
+                        && (cleanBubble == "Masasında · Hazır"
+                            || cleanBubble == "İşe alındı, görev bekliyor"
+                            || cleanBubble.hasPrefix("Ofis lideri hazır")
+                            || cleanBubble.hasPrefix("Hazır"))
+
                     VStack(spacing: 2) {
-                        if !cleanBubble.isEmpty {
+                        if !cleanBubble.isEmpty && !isQuietDefaultBubble {
                             let activeTalk = agent.status.isBusy || agent.status == .chatting || isWalking
                             Text(cleanBubble)
                                 .font(.system(size: 9.5, weight: .semibold, design: .rounded))
@@ -1131,61 +1156,118 @@ struct OfficeFloorView: View {
 
     private var quickBar: some View {
         HStack(spacing: 10) {
-            if let a = engine.selectedAgent {
-                Menu {
-                    Section("Aktif Ajanı Seç") {
-                        ForEach(engine.agents) { ag in
-                            Button {
-                                engine.selectedAgentId = ag.id
-                            } label: {
-                                HStack {
-                                    Text("\(ag.emoji) \(ag.name) (\(ag.modelId))")
-                                    if ag.id == a.id { Image(systemName: "checkmark") }
-                                }
-                            }
-                        }
-                    }
-                    if let prov = engine.provider(for: a.providerId), !prov.uniqueModels.isEmpty {
-                        Section("\(a.name) Modelini Değiştir") {
-                            ForEach(prov.uniqueModels.prefix(25), id: \.self) { m in
-                                Button {
-                                    var u = a
-                                    u.modelId = m
-                                    engine.updateAgent(u)
-                                } label: {
-                                    HStack {
-                                        Text(m)
-                                        if a.modelId == m { Image(systemName: "checkmark") }
+                    if let a = engine.selectedAgent {
+                        Menu {
+                            Section("Aktif LEGO Ajanını Seç") {
+                                ForEach(engine.agents) { ag in
+                                    Button {
+                                        engine.selectedAgentId = ag.id
+                                    } label: {
+                                        HStack {
+                                            Text("\(ag.emoji) \(ag.name) · \(ag.modelId)")
+                                            if ag.id == a.id { Image(systemName: "checkmark") }
+                                        }
                                     }
                                 }
                             }
+                            Divider()
+                            Button("✨ Bu Ajan İçin Akıllı Model Seç (ModelRouter)") {
+                                let route = engine.recommendedHireRoute(name: a.name, title: a.title, prompt: a.systemPrompt, requestedModel: "auto")
+                                var u = a
+                                u.providerId = route.provider.id
+                                u.modelId = route.modelId
+                                u.fallbackModelIds = route.fallbackModelIds
+                                engine.updateAgent(u)
+                            }
+                            Button("⚖️ Ekip Modellerini Çeşitlendir") {
+                                _ = engine.rebalanceAgentsToHealthyProviders()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                AgentAvatarView(agent: a, size: 22, showStatusDot: true, isSelected: false, mode: .compactBadge)
+                                Text(a.name)
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .fixedSize()
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .liquidGlassCapsule(tint: Color(hex: a.accentHex), interactive: true)
                         }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .layoutPriority(2)
+
+                        // Cross-provider quick model switcher pill right on the studio bar
+                        Menu {
+                            let suggestions = engine.suggestedModelCandidates(name: a.name, title: a.title, prompt: a.systemPrompt, limit: 6)
+                            if !suggestions.isEmpty {
+                                Section("✨ Önerilen (Tüm Sağlayıcılar)") {
+                                    ForEach(suggestions) { s in
+                                        Button {
+                                            var u = a
+                                            u.providerId = s.provider.id
+                                            u.modelId = s.modelId
+                                            engine.updateAgent(u)
+                                        } label: {
+                                            HStack {
+                                                Text("\(s.provider.name) · \(s.modelId)")
+                                                if a.providerId == s.provider.id && a.modelId == s.modelId {
+                                                    Image(systemName: "checkmark")
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            ForEach(engine.providers.filter { $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI && !$0.uniqueModels.isEmpty }) { p in
+                                Menu(p.name) {
+                                    ForEach(p.uniqueModels.prefix(20), id: \.self) { m in
+                                        Button {
+                                            var u = a
+                                            u.providerId = p.id
+                                            u.modelId = m
+                                            engine.updateAgent(u)
+                                        } label: {
+                                            HStack {
+                                                Text(m)
+                                                if a.providerId == p.id && a.modelId == m { Image(systemName: "checkmark") }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "cpu.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(Color(hex: a.accentHex))
+                                Text(a.modelId.components(separatedBy: "/").last ?? a.modelId)
+                                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 88)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 7.5, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 7).padding(.vertical, 6)
+                            .liquidGlassCapsule(tint: Color(hex: a.accentHex).opacity(0.85), interactive: true)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Sağlayıcı ve modeli tek tıkla değiştir (\(engine.provider(for: a.providerId)?.name ?? "API") · \(a.modelId))")
                     }
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(a.emoji).font(.system(size: 14))
-                        Text(a.name)
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                    .fixedSize()
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .liquidGlassCapsule(tint: Color(hex: a.accentHex), interactive: true)
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .layoutPriority(2)
-            }
 
             let activeAgent = engine.selectedAgent
             GlassChatInputBar(
                 text: $quickPrompt,
-                placeholder: "Buraya yaz, ajanlar gerekeni yapsın... (↵ Gönder)",
+                placeholder: "Ajana hızlı görev yaz... (↵ Gönder)",
                 isBusy: activeAgent?.status.isBusy ?? false,
                 accent: activeAgent.map { Color(hex: $0.accentHex) } ?? .accentColor,
                 compact: true,
@@ -1476,9 +1558,23 @@ private struct IsometricGlassDeskView: View {
                 )
             )
             ctx.stroke(screen, with: .color(Color(hex: "#0F172A")), lineWidth: 1.5)
+            // Mini code lines inside monitor screen
+            for row in 0..<3 {
+                let yOff = CGFloat(row) * 4.5
+                var codeBar = Path()
+                codeBar.move(to: CGPoint(x: cx - 23, y: cy - 26 + yOff))
+                codeBar.addLine(to: CGPoint(x: cx - (row == 1 ? 8 : 3), y: cy - 33 + yOff))
+                ctx.stroke(codeBar, with: .color(Color.white.opacity(working ? 0.85 : 0.40)), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
+            }
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 13, y: cy - 36, width: 3.5, height: 3.5)), with: .color(working ? accent : .green))
 
-            // 6) Mini saksı bitkisi + klavye
+            // 6) Mini LEGO Brick Accent Stack + Saksı Bitkisi + Klavye
+            let brickRect = CGRect(x: cx + 24, y: cy - 9, width: 10, height: 6)
+            ctx.fill(Path(roundedRect: brickRect, cornerRadius: 1.5), with: .color(accent.opacity(0.90)))
+            ctx.stroke(Path(roundedRect: brickRect, cornerRadius: 1.5), with: .color(Color(hex: "#0F172A")), lineWidth: 0.9)
+            ctx.fill(Path(roundedRect: CGRect(x: cx + 25.5, y: cy - 11, width: 2.8, height: 2.2), cornerRadius: 0.7), with: .color(accent))
+            ctx.fill(Path(roundedRect: CGRect(x: cx + 29.8, y: cy - 11, width: 2.8, height: 2.2), cornerRadius: 0.7), with: .color(accent))
+
             let pot = CGRect(x: cx - 40, y: cy - 12, width: 8, height: 7)
             ctx.fill(Path(roundedRect: pot, cornerRadius: 2), with: .color(Color(hex: "#CBD5E1")))
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 42, y: cy - 17, width: 12, height: 7)), with: .color(Color(hex: "#22C55E")))

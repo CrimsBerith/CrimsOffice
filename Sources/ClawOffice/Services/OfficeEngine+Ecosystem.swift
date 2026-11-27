@@ -514,6 +514,12 @@ extension OfficeEngine {
                 : agents.filter { requestedNames.contains($0.name.lowercased()) }
             if participants.isEmpty { participants = agents }
 
+            if participants.count >= 2 {
+                for i in 0..<(participants.count - 1) {
+                    showBeam(from: participants[i].id, to: participants[i + 1].id, label: "🐝 \(swarmType)", accentHex: participants[i].accentHex, duration: 5.5)
+                }
+            }
+
             let agentPayloads = SwarmsRuntimeService.buildAgentPayloads(
                 agents: participants,
                 providers: providers,
@@ -529,10 +535,12 @@ extension OfficeEngine {
                 workspacePath: workspacePath,
                 allowLocalEdits: allowFileWrites,
                 agents: agentPayloads,
-                director: agentPayloads.first
+                director: agentPayloads.first,
+                retryPolicy: SwarmsRetryPolicy(maxRetries: 3, initialDelay: 1.0, multiplier: 2.0)
             )
             do {
                 let res = try await SwarmsRuntimeService.runSwarm(req)
+                lastSwarmsTelemetry = res.telemetry
                 recordSwarmsTelemetry(res.telemetry)
                 await refreshSwarmsStatus()
                 for step in res.steps {

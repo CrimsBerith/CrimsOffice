@@ -415,6 +415,7 @@ final class OfficeEngine: ObservableObject {
     @Published var requestedSectionRawValue: String? = nil
     @Published var swarmsHealth: SwarmsDaemonHealth? = nil
     @Published var swarmsRecentRuns: [SwarmsRunSummary] = []
+    @Published var lastSwarmsTelemetry: SwarmsRunTelemetry? = nil
     @Published var isCheckingSwarms: Bool = false
     @Published var cronJobs: [OfficeCronJob] = []
     @Published var telegramChatId: String = ""
@@ -450,16 +451,20 @@ final class OfficeEngine: ObservableObject {
     @Published private(set) var compactionEventCount: Int = 0
     let persistConfig: Bool
 
+    private struct UncheckedTimerBox: @unchecked Sendable {
+        let timer: Timer
+    }
+
     deinit {
-        let aTimer = ambientTimer
-        let cTimer = cronTimer
+        let aBox = ambientTimer.map(UncheckedTimerBox.init)
+        let cBox = cronTimer.map(UncheckedTimerBox.init)
         if Thread.isMainThread {
-            aTimer?.invalidate()
-            cTimer?.invalidate()
-        } else if aTimer != nil || cTimer != nil {
+            aBox?.timer.invalidate()
+            cBox?.timer.invalidate()
+        } else if aBox != nil || cBox != nil {
             DispatchQueue.main.async {
-                aTimer?.invalidate()
-                cTimer?.invalidate()
+                aBox?.timer.invalidate()
+                cBox?.timer.invalidate()
             }
         }
         pipelineTask?.cancel()
@@ -522,11 +527,16 @@ final class OfficeEngine: ObservableObject {
                 let currentP = self.provider(for: self.agents[idx].providerId)
                 let needsMigration = currentP == nil || !currentP!.isEnabled || !currentP!.isConfigured || currentP!.kind == .antigravityCLI
                 if needsMigration {
+                    let existingModel = self.agents[idx].modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let modelSupportedOnHttp = !existingModel.isEmpty
+                        && existingModel.lowercased() != "auto"
+                        && currentP?.kind != .antigravityCLI
+                        && self.providers.contains { $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI && SwarmsRuntimeService.providerSupportsModel($0, modelId: existingModel) }
                     let decision = ModelRouter.selectModelForHire(
                         name: self.agents[idx].name,
                         title: self.agents[idx].title,
                         systemPrompt: self.agents[idx].systemPrompt,
-                        requestedModel: "auto",
+                        requestedModel: modelSupportedOnHttp ? existingModel : "auto",
                         providers: self.providers,
                         existingAgents: self.agents.enumerated().filter { $0.offset != idx }.map(\.element),
                         providerStatuses: self.providerStatuses,
@@ -1367,6 +1377,25 @@ final class OfficeEngine: ObservableObject {
         )
     }
 
+    func suggestedModelCandidates(
+        name: String,
+        title: String,
+        prompt: String,
+        limit: Int = 6
+    ) -> [ModelCandidateSuggestion] {
+        ModelRouter.suggestTopCandidates(
+            name: name,
+            title: title,
+            systemPrompt: prompt,
+            providers: providers,
+            existingAgents: agents,
+            providerStatuses: providerStatuses,
+            providerCooldowns: providerCooldowns,
+            modelMetrics: modelMetrics,
+            limit: limit
+        )
+    }
+
     @discardableResult
     func hireAgent(
         name: String,
@@ -1474,31 +1503,45 @@ final class OfficeEngine: ObservableObject {
             return (false, "'\(existing.name)' adlı ajan zaten ofiste var.")
         }
         let pos = nextAvailableDeskPosition()
-        let prov = provider(for: providerId)
-        let fallbacks: [String]
-        switch prov?.kind {
-        case .antigravityCLI:
-            fallbacks = ["gemini-4-hydrogen-high", "google/gemini-4-hydrogen", "deepseek-v4.1-flash"]
-        case .evren:
-            fallbacks = ["deepseek-v4.1-flash", "qwen3.8-flash-next", "gemma-4-31b", "glm-5.3"]
-        default:
-            fallbacks = prov?.uniqueModels.filter { $0 != modelId }.prefix(3).map { $0 } ?? []
+        let trimmedModelReq = modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isAutoModel = trimmedModelReq.isEmpty || trimmedModelReq.lowercased() == "auto"
+        let requestedProv = provider(for: providerId)
+        let decision = recommendedHireRoute(
+            name: cleanName,
+            title: title.isEmpty ? "Uzman Ajan" : title,
+            prompt: systemPrompt,
+            requestedModel: isAutoModel ? "auto" : trimmedModelReq
+        )
+        let finalProviderId: UUID
+        let finalModelId: String
+        if !isAutoModel,
+           let rp = requestedProv,
+           rp.isEnabled,
+           rp.isConfigured,
+           rp.kind != .antigravityCLI {
+            finalProviderId = rp.id
+            finalModelId = trimmedModelReq
+        } else {
+            finalProviderId = decision.provider.id
+            finalModelId = decision.modelId
         }
+        let fallbacks = decision.fallbackModelIds.filter { $0.caseInsensitiveCompare(finalModelId) != .orderedSame }
         let resolvedAvatar = (avatarAsset?.isEmpty == false)
             ? avatarAsset!
             : OfficeAvatarPreset.defaultAsset(forIndex: agents.count)
         let a = OfficeAgent(
             name: cleanName, title: title.isEmpty ? "Uzman Ajan" : title,
             emoji: emoji.isEmpty ? "🤖" : emoji, avatarAsset: resolvedAvatar, symbolName: "sparkles",
-            accentHex: accentHex.isEmpty ? "#38BDF8" : accentHex, providerId: providerId, modelId: modelId,
+            accentHex: accentHex.isEmpty ? "#38BDF8" : accentHex, providerId: finalProviderId, modelId: finalModelId,
             systemPrompt: systemPrompt, temperature: temperature, deskPosition: pos, currentPosition: pos,
             fallbackModelIds: fallbacks
         )
         agents.append(a)
         selectedAgentId = a.id
         saveConfig()
-        log(.success, source: "Ajan Kaynakları", "\(cleanName) (\(a.title)) ofise eklendi.")
-        return (true, "\(cleanName) eklendi.")
+        let provLabel = provider(for: finalProviderId)?.name ?? "API"
+        log(.success, source: "Ajan Kaynakları", "\(cleanName) (\(a.title)) ofise eklendi → \(provLabel) / \(finalModelId).")
+        return (true, "\(cleanName) eklendi (\(finalModelId)).")
     }
 
     private func clearWalkState(for id: UUID) {
@@ -3533,12 +3576,14 @@ final class OfficeEngine: ObservableObject {
             workspacePath: workspacePath,
             allowLocalEdits: allowFileWrites,
             agents: payloads,
-            director: payloads.first
+            director: payloads.first,
+            retryPolicy: SwarmsRetryPolicy(maxRetries: 3, initialDelay: 1.0, multiplier: 2.0)
         )
 
         do {
             let res = try await SwarmsRuntimeService.runSwarm(req)
             if Task.isCancelled { return }
+            lastSwarmsTelemetry = res.telemetry
             recordSwarmsTelemetry(res.telemetry)
             await refreshSwarmsStatus()
 
@@ -3862,19 +3907,37 @@ final class OfficeEngine: ObservableObject {
     }
 
     @discardableResult
-    func rebalanceAgentsToHealthyProviders() -> String {
+    func rebalanceAgentsToHealthyProviders(diversifyDuplicates: Bool = true) -> String {
         var updatedCount = 0
         var workingRoster = agents
+        var claimedModels: Set<String> = []
+        let totalHealthyChatModels = providers
+            .filter { $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI && !isProviderInCooldown($0.id) && (providerStatuses[$0.id]?.isOnline != false) }
+            .flatMap { $0.uniqueModels }
+            .filter { ModelRouter.isChatCapableModel($0) }
+            .reduce(into: Set<String>()) { $0.insert($1.lowercased()) }
+            .count
+
         for idx in workingRoster.indices {
             let a = workingRoster[idx]
             let currentProv = provider(for: a.providerId)
             let provHealthy = (currentProv?.isEnabled == true)
                 && (currentProv?.isConfigured == true)
+                && (currentProv?.kind != .antigravityCLI)
                 && !isProviderInCooldown(a.providerId)
                 && (providerStatuses[a.providerId]?.isOnline != false)
             let modelHealthy = !isModelInCooldown(providerId: a.providerId, modelId: a.modelId)
                 && (currentProv.map { SwarmsRuntimeService.providerSupportsModel($0, modelId: a.modelId) } ?? false)
-            guard !provHealthy || !modelHealthy else { continue }
+            let lowerModel = a.modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let isDuplicateModel = diversifyDuplicates
+                && !a.status.isBusy
+                && claimedModels.contains(lowerModel)
+                && claimedModels.count < totalHealthyChatModels
+
+            guard !provHealthy || !modelHealthy || isDuplicateModel else {
+                claimedModels.insert(lowerModel)
+                continue
+            }
 
             let decision = ModelRouter.selectModelForHire(
                 name: a.name,
@@ -3891,15 +3954,16 @@ final class OfficeEngine: ObservableObject {
             workingRoster[idx].modelId = decision.modelId
             workingRoster[idx].fallbackModelIds = decision.fallbackModelIds
             workingRoster[idx].agyConversationId = nil
+            claimedModels.insert(decision.modelId.lowercased())
             updatedCount += 1
             log(.info, source: a.name, "⚖️ Akıllı Dengeleme → \(decision.provider.name) / \(decision.modelId)")
         }
         if updatedCount > 0 {
             agents = workingRoster
             saveConfig()
-            return "\(updatedCount) ajan sağlıklı ve müsait modellere dengelendi ✓"
+            return "\(updatedCount) ajan sağlıklı ve çeşitli modellere dengelendi ✓"
         }
-        return "Tüm ajanlar zaten sağlıklı ve uyumlu modeller üzerinde çalışıyor."
+        return "Tüm ajanlar zaten sağlıklı ve çeşitlendirilmiş modeller üzerinde çalışıyor."
     }
 
     private func runOneShotWithFailover(

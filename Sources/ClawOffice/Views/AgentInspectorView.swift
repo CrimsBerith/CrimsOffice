@@ -623,9 +623,11 @@ struct AgentInspectorView: View {
                 Divider()
 
                 HStack(spacing: 8) {
-                    let validProviderId = engine.providers.contains(where: { $0.id == agent.providerId })
+                    let activeProvs = engine.providers.filter { $0.kind != .antigravityCLI && $0.isEnabled }
+                    let displayProvs = activeProvs.isEmpty ? engine.providers : activeProvs
+                    let validProviderId = displayProvs.contains(where: { $0.id == agent.providerId })
                         ? agent.providerId
-                        : (engine.providers.first?.id ?? agent.providerId)
+                        : (displayProvs.first?.id ?? agent.providerId)
                     Picker("API", selection: Binding(
                         get: { validProviderId },
                         set: { newId in
@@ -636,14 +638,38 @@ struct AgentInspectorView: View {
                             engine.updateAgent(u)
                         }
                     )) {
-                        ForEach(engine.providers) { p in Text(p.name).tag(p.id) }
-                    }.labelsHidden().frame(minWidth: 155, idealWidth: 185, maxWidth: 215)
+                        ForEach(displayProvs) { p in Text(p.name).tag(p.id) }
+                    }.labelsHidden().frame(minWidth: 145, idealWidth: 175, maxWidth: 205)
 
                     let models = engine.provider(for: validProviderId)?.uniqueModels ?? []
                     let freeModels = models.filter { $0.contains(":free") || $0.contains("/free") || $0.lowercased().contains("free") }
                     let regularModels = models.filter { !freeModels.contains($0) }
 
                     Menu {
+                        let others = engine.agents.filter { $0.id != agent.id }
+                        let recs = ModelRouter.suggestTopCandidates(
+                            name: agent.name,
+                            title: agent.title,
+                            systemPrompt: agent.systemPrompt,
+                            providers: engine.providers,
+                            existingAgents: others,
+                            providerStatuses: engine.providerStatuses,
+                            providerCooldowns: engine.providerCooldowns,
+                            modelMetrics: engine.modelMetrics,
+                            limit: 5
+                        )
+                        if !recs.isEmpty {
+                            Section("✨ Rol & Ekip Dengesine Göre Önerilen") {
+                                ForEach(recs) { r in
+                                    Button("\(r.provider.name) · \(r.modelId)") {
+                                        var u = agent
+                                        u.providerId = r.provider.id
+                                        u.modelId = r.modelId
+                                        engine.updateAgent(u)
+                                    }
+                                }
+                            }
+                        }
                         if freeModels.isEmpty && regularModels.isEmpty {
                             Text("Kayıtlı model listesi yok (Düzenle'den ekleyin)")
                         }
@@ -670,6 +696,32 @@ struct AgentInspectorView: View {
                         .padding(.horizontal, 8).padding(.vertical, 5)
                         .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
                     }.menuStyle(.borderlessButton)
+
+                    Button {
+                        let decision = ModelRouter.selectModelForHire(
+                            name: agent.name,
+                            title: agent.title,
+                            systemPrompt: agent.systemPrompt,
+                            requestedModel: "auto",
+                            providers: engine.providers,
+                            existingAgents: engine.agents.filter { $0.id != agent.id },
+                            providerStatuses: engine.providerStatuses,
+                            providerCooldowns: engine.providerCooldowns,
+                            modelMetrics: engine.modelMetrics
+                        )
+                        var u = agent
+                        u.providerId = decision.provider.id
+                        u.modelId = decision.modelId
+                        u.fallbackModelIds = decision.fallbackModelIds
+                        engine.updateAgent(u)
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.mint)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Bu ajan için role ve ekip yüküne göre en uygun farklı modeli otomatik ata")
+                    .accessibilityLabel("Akıllı model öner ve ata")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
 
@@ -807,9 +859,10 @@ struct AgentEditSheet: View {
                         }
 
                         HStack(spacing: 10) {
-                            let validProvId = engine.providers.contains(where: { $0.id == draft.providerId })
+                            let activeProvs = engine.providers.filter { ($0.kind != .antigravityCLI && $0.isEnabled) || $0.id == draft.providerId }
+                            let validProvId = activeProvs.contains(where: { $0.id == draft.providerId })
                                 ? draft.providerId
-                                : (engine.providers.first?.id ?? draft.providerId)
+                                : (activeProvs.first?.id ?? draft.providerId)
                             Picker("API Sağlayıcı", selection: Binding(
                                 get: { validProvId },
                                 set: { newId in
@@ -819,7 +872,7 @@ struct AgentEditSheet: View {
                                     }
                                 }
                             )) {
-                                ForEach(engine.providers) { p in
+                                ForEach(activeProvs) { p in
                                     Text("\(p.name)\(p.isConfigured ? " (Aktif)" : "")").tag(p.id)
                                 }
                             }
@@ -841,6 +894,28 @@ struct AgentEditSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Model ID").font(.caption.weight(.medium))
+                                Button {
+                                    let decision = ModelRouter.selectModelForHire(
+                                        name: draft.name,
+                                        title: draft.title,
+                                        systemPrompt: draft.systemPrompt,
+                                        requestedModel: "auto",
+                                        providers: engine.providers,
+                                        existingAgents: engine.agents.filter { $0.id != draft.id },
+                                        providerStatuses: engine.providerStatuses,
+                                        providerCooldowns: engine.providerCooldowns,
+                                        modelMetrics: engine.modelMetrics
+                                    )
+                                    draft.providerId = decision.provider.id
+                                    draft.modelId = decision.modelId
+                                    fallbackText = decision.fallbackModelIds.joined(separator: ", ")
+                                } label: {
+                                    Label("Akıllı Seç", systemImage: "sparkles")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .padding(.horizontal, 8).padding(.vertical, 3)
+                                        .liquidGlassCapsule(tint: .mint, interactive: true)
+                                }
+                                .buttonStyle(.plain)
                                 Spacer()
                                 Text("Sıcaklık: \(String(format: "%.2f", draft.temperature))")
                                     .font(.system(size: 10, design: .monospaced))
@@ -879,7 +954,7 @@ struct AgentEditSheet: View {
                             if let prov = currentProvider, !prov.uniqueModels.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 5) {
-                                        ForEach(prov.uniqueModels.prefix(7), id: \.self) { m in
+                                        ForEach(prov.uniqueModels.prefix(16), id: \.self) { m in
                                             let isSelected = draft.modelId == m
                                             let isFree = m.contains(":free") || m.contains("/free")
                                             Button { draft.modelId = m } label: {

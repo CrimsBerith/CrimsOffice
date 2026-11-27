@@ -30,112 +30,120 @@ enum RoleSpecialty: String, Sendable {
     case general
 
     static func classify(name: String, title: String, prompt: String, hint: String = "") -> RoleSpecialty {
-        let corpus = "\(name) \(title) \(prompt) \(hint)".lowercased()
-        if corpus.contains("tasar") || corpus.contains("ui/ux") || corpus.contains("ui ") || corpus.contains(" ux") || corpus.contains("hig") || corpus.contains("görsel") || corpus.contains("design") {
-            return .uiuxDesign
+        func match(_ corpus: String) -> RoleSpecialty? {
+            if corpus.contains("tasar") || corpus.contains("ui/ux") || corpus.contains("ui ") || corpus.contains(" ux") || corpus.contains("hig") || corpus.contains("görsel") || corpus.contains("design") {
+                return .uiuxDesign
+            }
+            if corpus.contains("denet") || corpus.contains("güvenlik") || corpus.contains("security") || corpus.contains("audit") || corpus.contains("qa") || corpus.contains("kalite") || corpus.contains("test") {
+                return .securityAuditQA
+            }
+            if corpus.contains("devops") || corpus.contains("ci/cd") || corpus.contains("deploy") || corpus.contains("hata ayık") || corpus.contains("debug") || corpus.contains("performans") || corpus.contains("build") {
+                return .devOpsDebug
+            }
+            if corpus.contains("araştır") || corpus.contains("research") || corpus.contains("bilgi graf") || corpus.contains("graphify") || corpus.contains("doküman") || corpus.contains("analist") || corpus.contains("scout") {
+                return .researchDocs
+            }
+            if corpus.contains("mimar") || corpus.contains("architect") || corpus.contains("lider") || corpus.contains("direktör") || corpus.contains("lead") || corpus.contains("stratej") {
+                return .architectureLead
+            }
+            if corpus.contains("kod") || corpus.contains("swift") || corpus.contains("macos") || corpus.contains("ios") || corpus.contains("geliştir") || corpus.contains("yazılım") || corpus.contains("developer") || corpus.contains("engineer") || corpus.contains("full-stack") {
+                return .coding
+            }
+            return nil
         }
-        if corpus.contains("denet") || corpus.contains("güvenlik") || corpus.contains("security") || corpus.contains("audit") || corpus.contains("qa") || corpus.contains("kalite") || corpus.contains("test") {
-            return .securityAuditQA
+
+        // Prioritize explicit agent identity/title before falling back to generic multi-role systemPrompt text
+        if let fromIdentity = match("\(name) \(title) \(hint)".lowercased()) {
+            return fromIdentity
         }
-        if corpus.contains("devops") || corpus.contains("ci/cd") || corpus.contains("deploy") || corpus.contains("hata ayık") || corpus.contains("debug") || corpus.contains("performans") || corpus.contains("build") {
-            return .devOpsDebug
-        }
-        if corpus.contains("araştır") || corpus.contains("research") || corpus.contains("bilgi graf") || corpus.contains("graphify") || corpus.contains("doküman") || corpus.contains("analist") || corpus.contains("scout") {
-            return .researchDocs
-        }
-        if corpus.contains("mimar") || corpus.contains("architect") || corpus.contains("lider") || corpus.contains("direktör") || corpus.contains("lead") || corpus.contains("stratej") {
-            return .architectureLead
-        }
-        if corpus.contains("kod") || corpus.contains("swift") || corpus.contains("macos") || corpus.contains("ios") || corpus.contains("geliştir") || corpus.contains("yazılım") || corpus.contains("developer") || corpus.contains("engineer") || corpus.contains("full-stack") {
-            return .coding
-        }
-        return .general
+        return match(prompt.lowercased()) ?? .general
     }
 
-    /// Ordered preference patterns from strongest fit to solid backup across all providers.
+    /// Ordered preference patterns from strongest fit to solid backup across active HTTP providers.
     var preferredModelPatterns: [String] {
         switch self {
         case .architectureLead:
             return [
-                "gemini-4-hydrogen-xhigh",
-                "google/gemini-4-hydrogen",
                 "glm-5.3",
-                "claude-opus-4-6-thinking",
-                "gemini-4-hydrogen-high",
                 "nvidia/nemotron-3-ultra-550b-a55b:free",
+                "deepseek/deepseek-r1:free",
                 "deepseek-v4.1-flash",
-                "anthropic/claude-opus",
+                "google/gemma-4-31b-it:free",
                 "llama-3.3-70b-versatile",
-                "qwen3.8-flash-next"
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "qwen3.8-flash-next",
+                "gemma-4-31b",
+                "anthropic/claude-opus-5.5",
+                "openai/gpt-6.2-sol"
             ]
         case .coding:
             return [
                 "deepseek-v4.1-flash",
-                "claude-sonnet-4-6",
-                "gemini-4-hydrogen-high",
                 "qwen/qwen-2.5-coder-32b-instruct:free",
                 "qwen3.8-flash-next",
+                "google/gemma-4-26b-a4b-it:free",
                 "glm-5.3",
-                "anthropic/claude-sonnet",
+                "anthropic/claude-sonnet-5.5",
+                "deepseek/deepseek-r1:free",
+                "llama-3.3-70b-versatile",
                 "kilo-auto/free",
-                "qwen2.5-coder:14b",
-                "qwen2.5-coder:7b"
+                "openrouter/free"
             ]
         case .securityAuditQA:
             return [
-                "glm-5.3",
-                "claude-sonnet-4-6",
-                "gemini-4-hydrogen-high",
-                "nvidia/nemotron-3-ultra-550b-a55b:free",
                 "deepseek/deepseek-r1:free",
+                "glm-5.3",
+                "nvidia/nemotron-3-ultra-550b-a55b:free",
                 "qwen3.8-flash-next",
                 "deepseek-v4.1-flash",
                 "llama-3.3-70b-versatile",
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "google/gemma-4-31b-it:free",
                 "openrouter/free"
             ]
         case .researchDocs:
             return [
                 "qwen3.8-flash-next",
-                "gemini-3.8-flash-high",
                 "inclusionai/ling-3.2-flash:free",
                 "baidu/ernie-5.5-flash-preview:free",
-                "google/gemini-4-neon",
                 "nvidia/nemotron-3.5-lightning:free",
+                "google/gemini-4-neon",
                 "llama-3.3-70b-versatile",
                 "glm-5.3",
-                "deepseek-v4.1-flash"
+                "deepseek-v4.1-flash",
+                "meta-llama/llama-3.3-70b-instruct:free"
             ]
         case .uiuxDesign:
             return [
                 "gemma-4-31b",
                 "google/gemma-4-31b-it:free",
-                "glm-5.3",
-                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-                "gemini-4-hydrogen-medium",
                 "qwen3-vl-30b",
-                "google/gemma-4-26b-a4b-it:free",
                 "nvidia/nemotron-3.5-super-vl:free",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                "google/gemma-4-26b-a4b-it:free",
+                "glm-5.3",
                 "qwen3.8-flash-next"
             ]
         case .devOpsDebug:
             return [
-                "qwen3.8-flash-next",
                 "google/gemma-4-26b-a4b-it:free",
-                "gemini-4-hydrogen-medium",
+                "qwen3.8-flash-next",
                 "llama-3.3-70b-versatile",
+                "qwen/qwen-2.5-coder-32b-instruct:free",
                 "deepseek-v4.1-flash",
+                "nvidia/nemotron-3.5-lightning:free",
                 "glm-5.3",
-                "kilo-auto/free",
-                "qwen2.5-coder:7b"
+                "kilo-auto/free"
             ]
         case .general:
             return [
                 "glm-5.3",
                 "qwen3.8-flash-next",
-                "gemini-4-hydrogen-high",
+                "google/gemma-4-31b-it:free",
                 "deepseek-v4.1-flash",
                 "gemma-4-31b",
                 "llama-3.3-70b-versatile",
+                "inclusionai/ling-3.2-flash:free",
                 "kilo-auto/free",
                 "openrouter/free"
             ]
@@ -161,6 +169,14 @@ struct ModelSelectionDecision: Sendable {
     let fallbackModelIds: [String]
     let reason: String
     let specialty: RoleSpecialty
+}
+
+struct ModelCandidateSuggestion: Identifiable, Sendable {
+    var id: String { "\(provider.id.uuidString):\(modelId)" }
+    let provider: APIProviderConfig
+    let modelId: String
+    let score: Double
+    let note: String
 }
 
 /// Role-optimal, load-aware, and availability-aware model router for agent hiring & template resolution.
@@ -195,44 +211,22 @@ enum ModelRouter: Sendable {
         let specialty = RoleSpecialty.classify(name: name, title: title, prompt: systemPrompt, hint: requestedModel)
         let trimmedRequest = requestedModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowerReq = trimmedRequest.lowercased()
-        let autoTokens: Set<String> = ["", "auto", "best", "recommended", "otomatik", "smart"]
-        let isAutoRequest = autoTokens.contains(lowerReq)
+        let isAutoRequest = isAutoToken(lowerReq)
 
-        let enabledConfigured = providers.filter { $0.isEnabled && $0.isConfigured }
-        let onlineConfigured = enabledConfigured.filter { p in
-            providerStatuses[p.id]?.isOnline != false
-        }
-        let usableProviders = !onlineConfigured.isEmpty
-            ? onlineConfigured
-            : (!enabledConfigured.isEmpty ? enabledConfigured : providers.filter { $0.isConfigured })
-        let fallbackBaseProviders = usableProviders.isEmpty ? providers : usableProviders
-
-        // Build candidate list across usable providers
-        var pool: [(provider: APIProviderConfig, model: String)] = []
-        for p in fallbackBaseProviders {
-            let candidates = p.uniqueModels.filter { isChatCapableModel($0) }
-            let list = candidates.isEmpty ? [p.defaultModel].filter { !$0.isEmpty } : candidates
-            for m in list {
-                pool.append((p, m))
-            }
-        }
-        if pool.isEmpty, let firstP = providers.first {
-            let m = firstP.defaultModel.isEmpty ? "deepseek-v4.1-flash" : firstP.defaultModel
-            pool.append((firstP, m))
-        }
-
-        // Map existing team load / saturation per model & provider
-        var agentsPerModel: [String: Int] = [:]
-        var busyAgentsPerModel: [String: Int] = [:]
-        var agentsPerProvider: [UUID: Int] = [:]
-        for a in existingAgents {
-            let mk = a.modelId.lowercased()
-            agentsPerModel[mk, default: 0] += 1
-            if a.status.isBusy {
-                busyAgentsPerModel[mk, default: 0] += 1
-            }
-            agentsPerProvider[a.providerId, default: 0] += 1
-        }
+        let eval = evaluateCandidatePool(
+            specialty: specialty,
+            requestedModel: trimmedRequest,
+            isAutoRequest: isAutoRequest,
+            providers: providers,
+            existingAgents: existingAgents,
+            providerStatuses: providerStatuses,
+            providerCooldowns: providerCooldowns,
+            modelMetrics: modelMetrics,
+            now: now
+        )
+        let pool = eval.pool
+        let scoringPool = eval.scoringPool
+        let agentsPerModel = eval.agentsPerModel
 
         func isProviderCooled(_ id: UUID) -> Bool {
             guard let until = providerCooldowns[id] else { return false }
@@ -240,138 +234,21 @@ enum ModelRouter: Sendable {
         }
 
         func scoreCandidate(provider p: APIProviderConfig, model m: String) -> (score: Double, note: String) {
-            let lowerM = m.lowercased()
-            let key = ModelRouteKey(providerId: p.id, modelId: m)
-            let metrics = modelMetrics[key]
-            var score = 0.0
-            var reasons: [String] = []
-
-            // 1. Role capability preference match (exact tier or strong substring match)
-            let patterns = specialty.preferredModelPatterns
-            if let exactIdx = patterns.firstIndex(where: { lowerM == $0.lowercased() }) {
-                score += Double(110 - exactIdx * 9)
-                reasons.append("rol uyumu #\(exactIdx + 1)")
-            } else if let partialIdx = patterns.firstIndex(where: { lowerM.contains($0.lowercased()) || $0.lowercased().contains(lowerM) }) {
-                score += Double(90 - partialIdx * 8)
-                reasons.append("rol ailesi")
-            } else {
-                // Family heuristics for dynamically fetched models (e.g. OpenRouter/Kilo catalogs)
-                switch specialty {
-                case .coding:
-                    if lowerM.contains("coder") || lowerM.contains("deepseek") || lowerM.contains("sonnet") || lowerM.contains("codestral") { score += 55 }
-                case .securityAuditQA, .architectureLead:
-                    if lowerM.contains("opus") || lowerM.contains("glm") || lowerM.contains("ultra") || lowerM.contains("hydrogen") || lowerM.contains("-r1") || lowerM.contains("reasoning") { score += 55 }
-                case .researchDocs:
-                    if lowerM.contains("flash") || lowerM.contains("ling") || lowerM.contains("ernie") || lowerM.contains("lightning") || lowerM.contains("neon") { score += 52 }
-                case .uiuxDesign:
-                    if lowerM.contains("gemma") || lowerM.contains("-vl") || lowerM.contains("omni") || lowerM.contains("vision") { score += 52 }
-                case .devOpsDebug:
-                    if lowerM.contains("flash") || lowerM.contains("gemma-4-26b") || lowerM.contains("coder") || lowerM.contains("70b") { score += 50 }
-                case .general:
-                    if lowerM.contains("glm") || lowerM.contains("hydrogen") || lowerM.contains("qwen") { score += 45 }
-                }
-            }
-
-            // Slight preference for reliable fast/free-tier primary providers over generic routers
-            if p.kind == .evren {
-                score += 12
-            } else if p.kind == .groq {
-                score += 8
-            } else if lowerM.contains(":free") || lowerM.contains("/free") {
-                score += 6
-            }
-            if lowerM == "auto" || lowerM.hasSuffix("/auto") || lowerM == "openrouter/free" || lowerM == "kilo-auto/free" {
-                score -= 12 // Prefer deterministic named specialists when available
-            }
-
-            // 2. Explicit non-auto hint boost
-            if !isAutoRequest {
-                if lowerM == lowerReq {
-                    score += 85
-                    reasons.append("istenen model")
-                } else if lowerM.contains(lowerReq) {
-                    score += 55
-                    reasons.append("istenen anahtar")
-                }
-            }
-
-            // 3. Health & Cooldown penalties
-            let onlineStatus = providerStatuses[p.id]
-            if onlineStatus?.isOnline == false {
-                score -= 500
-                reasons.append("çevrimdışı")
-            }
-            if isProviderCooled(p.id) {
-                score -= 320
-                reasons.append("sağlayıcı beklemede")
-            }
-            if metrics?.isInCooldown(now: now) == true {
-                score -= 280
-                reasons.append("model beklemede")
-            }
-
-            // 4. Live In-Flight Load & Team Congestion penalties
-            let inFlight = metrics?.inFlightCount ?? 0
-            if inFlight > 0 {
-                score -= Double(inFlight) * 145.0
-                reasons.append("aktif yoğunluk(\(inFlight))")
-            }
-            let provInFlight = modelMetrics
-                .filter { $0.key.providerId == p.id }
-                .reduce(0) { $0 + $1.value.inFlightCount }
-            if provInFlight > 0 {
-                score -= Double(provInFlight) * 30.0
-            }
-            if p.kind == .evren && provInFlight >= 3 {
-                score -= 220.0
-                reasons.append("EVREN eşzamanlı sınır(\(provInFlight)/4)")
-            }
-
-            // Penalize piling all agents onto the exact same model when healthy alternatives exist
-            let assignedCount = agentsPerModel[lowerM, default: 0]
-            let busyCount = busyAgentsPerModel[lowerM, default: 0]
-            if assignedCount > 0 {
-                score -= Double(assignedCount) * 38.0
-                reasons.append("ekip dağılımı(\(assignedCount))")
-            }
-            if busyCount > 0 {
-                score -= Double(busyCount) * 65.0
-            }
-            let provAgents = agentsPerProvider[p.id, default: 0]
-            if provAgents >= 3 {
-                score -= Double(provAgents - 2) * 14.0
-            }
-
-            // 5. Latency & reliability adjustments
-            if let mStat = metrics {
-                if mStat.consecutiveErrors > 0 {
-                    score -= Double(mStat.consecutiveErrors) * 60.0
-                }
-                if mStat.rateLimitCount > 0 {
-                    score -= Double(min(4, mStat.rateLimitCount)) * 25.0
-                }
-                if mStat.ewmaLatencyMs > 0 {
-                    if mStat.ewmaLatencyMs < 2500 {
-                        score += 12
-                    } else if mStat.ewmaLatencyMs > 15_000 {
-                        score -= 24
-                    }
-                }
-            }
-            if let lat = onlineStatus?.latencyMs, onlineStatus?.isOnline == true, lat > 0 {
-                if lat < 400 { score += 6 }
-                else if lat > 2500 { score -= 12 }
-            }
-
-            return (score, reasons.joined(separator: ", "))
+            evaluateSingleCandidate(
+                provider: p,
+                model: m,
+                specialty: specialty,
+                lowerReq: lowerReq,
+                isAutoRequest: isAutoRequest,
+                agentsPerModel: agentsPerModel,
+                busyAgentsPerModel: eval.busyAgentsPerModel,
+                agentsPerProvider: eval.agentsPerProvider,
+                providerStatuses: providerStatuses,
+                providerCooldowns: providerCooldowns,
+                modelMetrics: modelMetrics,
+                now: now
+            )
         }
-
-        // Filter out cooled candidates whenever any non-cooled healthy option exists in pool.
-        let uncooledPool = pool.filter { item in
-            let key = ModelRouteKey(providerId: item.provider.id, modelId: item.model)
-            return !isProviderCooled(item.provider.id) && (modelMetrics[key]?.isInCooldown(now: now) != true)
-        }
-        let scoringPool = uncooledPool.isEmpty ? pool : uncooledPool
 
         // Check if caller requested a specific exact model that is healthy, idle, and not oversaturated
         if !isAutoRequest,
@@ -460,6 +337,221 @@ enum ModelRouter: Sendable {
             reason: reasonText,
             specialty: specialty
         )
+    }
+
+    private static func isAutoToken(_ lower: String) -> Bool {
+        ["", "auto", "best", "recommended", "otomatik", "smart"].contains(lower)
+    }
+
+    private static func evaluateCandidatePool(
+        specialty: RoleSpecialty,
+        requestedModel: String,
+        isAutoRequest: Bool,
+        providers: [APIProviderConfig],
+        existingAgents: [OfficeAgent],
+        providerStatuses: [UUID: ProviderHealthStatus],
+        providerCooldowns: [UUID: Date],
+        modelMetrics: [ModelRouteKey: ModelRuntimeMetrics],
+        now: Date
+    ) -> (
+        pool: [(provider: APIProviderConfig, model: String)],
+        scoringPool: [(provider: APIProviderConfig, model: String)],
+        agentsPerModel: [String: Int],
+        busyAgentsPerModel: [String: Int],
+        agentsPerProvider: [UUID: Int]
+    ) {
+        let enabledConfigured = providers.filter { $0.isEnabled && $0.isConfigured && $0.kind != .antigravityCLI }
+        let onlineConfigured = enabledConfigured.filter { providerStatuses[$0.id]?.isOnline != false }
+        let usableProviders = !onlineConfigured.isEmpty
+            ? onlineConfigured
+            : (!enabledConfigured.isEmpty ? enabledConfigured : providers.filter { $0.isConfigured && $0.kind != .antigravityCLI })
+        let fallbackBaseProviders = usableProviders.isEmpty ? providers.filter { $0.kind != .antigravityCLI } : usableProviders
+
+        var pool: [(provider: APIProviderConfig, model: String)] = []
+        for p in fallbackBaseProviders {
+            let candidates = p.uniqueModels.filter { isChatCapableModel($0) }
+            let list = candidates.isEmpty ? [p.defaultModel].filter { !$0.isEmpty } : candidates
+            for m in list { pool.append((p, m)) }
+        }
+        if pool.isEmpty, let firstP = providers.first(where: { $0.kind != .antigravityCLI }) ?? providers.first {
+            let m = firstP.defaultModel.isEmpty ? "deepseek-v4.1-flash" : firstP.defaultModel
+            pool.append((firstP, m))
+        }
+
+        var agentsPerModel: [String: Int] = [:]
+        var busyAgentsPerModel: [String: Int] = [:]
+        var agentsPerProvider: [UUID: Int] = [:]
+        for a in existingAgents {
+            let mk = a.modelId.lowercased()
+            agentsPerModel[mk, default: 0] += 1
+            if a.status.isBusy { busyAgentsPerModel[mk, default: 0] += 1 }
+            agentsPerProvider[a.providerId, default: 0] += 1
+        }
+
+        let uncooledPool = pool.filter { item in
+            let cooledProv = providerCooldowns[item.provider.id].map { now < $0 } ?? false
+            let key = ModelRouteKey(providerId: item.provider.id, modelId: item.model)
+            return !cooledProv && (modelMetrics[key]?.isInCooldown(now: now) != true)
+        }
+        let scoringPool = uncooledPool.isEmpty ? pool : uncooledPool
+        return (pool, scoringPool, agentsPerModel, busyAgentsPerModel, agentsPerProvider)
+    }
+
+    private static func evaluateSingleCandidate(
+        provider p: APIProviderConfig,
+        model m: String,
+        specialty: RoleSpecialty,
+        lowerReq: String,
+        isAutoRequest: Bool,
+        agentsPerModel: [String: Int],
+        busyAgentsPerModel: [String: Int],
+        agentsPerProvider: [UUID: Int],
+        providerStatuses: [UUID: ProviderHealthStatus],
+        providerCooldowns: [UUID: Date],
+        modelMetrics: [ModelRouteKey: ModelRuntimeMetrics],
+        now: Date
+    ) -> (score: Double, note: String) {
+        let lowerM = m.lowercased()
+        let key = ModelRouteKey(providerId: p.id, modelId: m)
+        let metrics = modelMetrics[key]
+        var score = 0.0
+        var reasons: [String] = []
+
+        let patterns = specialty.preferredModelPatterns
+        if let exactIdx = patterns.firstIndex(where: { lowerM == $0.lowercased() }) {
+            score += Double(124 - exactIdx * 11)
+            reasons.append("rol #\(exactIdx + 1)")
+        } else if let partialIdx = patterns.firstIndex(where: { lowerM.contains($0.lowercased()) || $0.lowercased().contains(lowerM) }) {
+            score += Double(94 - partialIdx * 9)
+            reasons.append("rol ailesi")
+        } else {
+            switch specialty {
+            case .coding:
+                if lowerM.contains("coder") || lowerM.contains("deepseek") || lowerM.contains("sonnet") || lowerM.contains("codestral") { score += 55 }
+            case .securityAuditQA, .architectureLead:
+                if lowerM.contains("opus") || lowerM.contains("glm") || lowerM.contains("ultra") || lowerM.contains("hydrogen") || lowerM.contains("-r1") || lowerM.contains("reasoning") { score += 55 }
+            case .researchDocs:
+                if lowerM.contains("flash") || lowerM.contains("ling") || lowerM.contains("ernie") || lowerM.contains("lightning") || lowerM.contains("neon") { score += 52 }
+            case .uiuxDesign:
+                if lowerM.contains("gemma") || lowerM.contains("-vl") || lowerM.contains("omni") || lowerM.contains("vision") { score += 52 }
+            case .devOpsDebug:
+                if lowerM.contains("flash") || lowerM.contains("gemma-4-26b") || lowerM.contains("coder") || lowerM.contains("70b") { score += 50 }
+            case .general:
+                if lowerM.contains("glm") || lowerM.contains("hydrogen") || lowerM.contains("qwen") { score += 45 }
+            }
+        }
+
+        if p.kind == .evren { score += 8 }
+        else if p.kind == .groq { score += 6 }
+        else if lowerM.contains(":free") || lowerM.contains("/free") { score += 8 }
+        if lowerM == "auto" || lowerM.hasSuffix("/auto") || lowerM == "openrouter/free" || lowerM == "kilo-auto/free" { score -= 10 }
+
+        if !isAutoRequest {
+            if lowerM == lowerReq { score += 85; reasons.append("istenen model") }
+            else if lowerM.contains(lowerReq) { score += 55; reasons.append("istenen anahtar") }
+        }
+
+        let onlineStatus = providerStatuses[p.id]
+        if onlineStatus?.isOnline == false { score -= 500; reasons.append("çevrimdışı") }
+        if let until = providerCooldowns[p.id], now < until { score -= 320; reasons.append("sağlayıcı beklemede") }
+        if metrics?.isInCooldown(now: now) == true { score -= 280; reasons.append("model beklemede") }
+
+        let inFlight = metrics?.inFlightCount ?? 0
+        if inFlight > 0 { score -= Double(inFlight) * 145.0; reasons.append("aktif yoğunluk(\(inFlight))") }
+        let provInFlight = modelMetrics.filter { $0.key.providerId == p.id }.reduce(0) { $0 + $1.value.inFlightCount }
+        if provInFlight > 0 { score -= Double(provInFlight) * 30.0 }
+        if p.kind == .evren && provInFlight >= 3 { score -= 220.0; reasons.append("EVREN eşzamanlı sınır(\(provInFlight)/4)") }
+
+        let assignedCount = agentsPerModel[lowerM, default: 0]
+        let busyCount = busyAgentsPerModel[lowerM, default: 0]
+        if assignedCount == 0 {
+            score += 42.0
+            reasons.append("yeni çeşitlilik")
+        } else {
+            score -= Double(assignedCount) * 68.0
+            reasons.append("ekip dağılımı(\(assignedCount))")
+        }
+        if busyCount > 0 { score -= Double(busyCount) * 65.0 }
+        let provAgents = agentsPerProvider[p.id, default: 0]
+        if provAgents >= 2 { score -= Double(provAgents - 1) * 10.0 }
+
+        if let mStat = metrics {
+            if mStat.consecutiveErrors > 0 { score -= Double(mStat.consecutiveErrors) * 60.0 }
+            if mStat.rateLimitCount > 0 { score -= Double(min(4, mStat.rateLimitCount)) * 25.0 }
+            if mStat.ewmaLatencyMs > 0 {
+                if mStat.ewmaLatencyMs < 2500 { score += 12 }
+                else if mStat.ewmaLatencyMs > 15_000 { score -= 24 }
+            }
+        }
+        if let lat = onlineStatus?.latencyMs, onlineStatus?.isOnline == true, lat > 0 {
+            if lat < 400 { score += 6 }
+            else if lat > 2500 { score -= 12 }
+        }
+        return (score, reasons.joined(separator: ", "))
+    }
+
+    /// Returns top diverse healthy candidates across active HTTP providers using the shared router scorer.
+    static func suggestTopCandidates(
+        name: String,
+        title: String,
+        systemPrompt: String,
+        providers: [APIProviderConfig],
+        existingAgents: [OfficeAgent],
+        providerStatuses: [UUID: ProviderHealthStatus],
+        providerCooldowns: [UUID: Date],
+        modelMetrics: [ModelRouteKey: ModelRuntimeMetrics],
+        limit: Int = 6,
+        now: Date = Date()
+    ) -> [ModelCandidateSuggestion] {
+        let specialty = RoleSpecialty.classify(name: name, title: title, prompt: systemPrompt)
+        let eval = evaluateCandidatePool(
+            specialty: specialty,
+            requestedModel: "auto",
+            isAutoRequest: true,
+            providers: providers,
+            existingAgents: existingAgents,
+            providerStatuses: providerStatuses,
+            providerCooldowns: providerCooldowns,
+            modelMetrics: modelMetrics,
+            now: now
+        )
+        let raw = eval.scoringPool.map { item -> ModelCandidateSuggestion in
+            let res = evaluateSingleCandidate(
+                provider: item.provider,
+                model: item.model,
+                specialty: specialty,
+                lowerReq: "auto",
+                isAutoRequest: true,
+                agentsPerModel: eval.agentsPerModel,
+                busyAgentsPerModel: eval.busyAgentsPerModel,
+                agentsPerProvider: eval.agentsPerProvider,
+                providerStatuses: providerStatuses,
+                providerCooldowns: providerCooldowns,
+                modelMetrics: modelMetrics,
+                now: now
+            )
+            return ModelCandidateSuggestion(provider: item.provider, modelId: item.model, score: res.score, note: res.note)
+        }
+        .sorted { lhs, rhs in
+            if lhs.score != rhs.score { return lhs.score > rhs.score }
+            return lhs.modelId < rhs.modelId
+        }
+
+        var selected: [ModelCandidateSuggestion] = []
+        var countPerProv: [UUID: Int] = [:]
+        var seenModels: Set<String> = []
+        for item in raw where countPerProv[item.provider.id, default: 0] < 2 {
+            if seenModels.insert(item.modelId.lowercased()).inserted {
+                selected.append(item)
+                countPerProv[item.provider.id, default: 0] += 1
+                if selected.count >= limit { return selected }
+            }
+        }
+        for item in raw where seenModels.insert(item.modelId.lowercased()).inserted {
+            selected.append(item)
+            if selected.count >= limit { break }
+        }
+        return selected
     }
 
     private static func buildDiverseFallbacks(

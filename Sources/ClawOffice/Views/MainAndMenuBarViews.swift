@@ -73,41 +73,37 @@ struct MainContentView: View {
                                 case .error: return .red
                                 }
                             }()
+                            let shortModel = a.modelId.components(separatedBy: "/").last ?? a.modelId
                             HStack(spacing: 8) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(hex: a.accentHex).opacity(0.20))
-                                        .frame(width: 24, height: 24)
-                                    Image(systemName: a.symbolName.isEmpty ? "sparkles" : a.symbolName)
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(Color(hex: a.accentHex))
-                                }
+                                AgentAvatarView(
+                                    agent: a,
+                                    size: 32,
+                                    showStatusDot: true,
+                                    isSelected: isSelected,
+                                    mode: .compactBadge
+                                )
 
                                 VStack(alignment: .leading, spacing: 1.5) {
-                                    HStack(spacing: 5) {
+                                    HStack(spacing: 4) {
                                         Text(a.name)
                                             .font(.system(size: 12, weight: isSelected ? .bold : .semibold, design: .rounded))
                                             .lineLimit(1)
                                         Circle()
                                             .fill(dotColor)
-                                            .frame(width: 6.5, height: 6.5)
+                                            .frame(width: 6, height: 6)
                                             .shadow(color: dotColor.opacity(0.7), radius: 2.5)
                                     }
                                     Text(a.title)
                                         .font(.system(size: 9.5))
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                    Text(shortModel)
+                                        .font(.system(size: 8.5, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Color(hex: a.accentHex).opacity(0.92))
+                                        .lineLimit(1)
                                 }
 
-                                Spacer(minLength: 4)
-
-                                AgentAvatarView(
-                                    agent: a,
-                                    size: 28,
-                                    showStatusDot: false,
-                                    isSelected: isSelected,
-                                    mode: .compactBadge
-                                )
+                                Spacer(minLength: 2)
                             }
                             .padding(.vertical, 5)
                             .padding(.horizontal, 8)
@@ -236,14 +232,33 @@ struct AddAgentSheet: View {
     @State private var hex = "#E11D48"
     @State private var providerId = UUID()
     @State private var modelId = ""
+    @State private var useAutoModel = true
+    @State private var routeHintText = ""
     @State private var temperature = 0.25
     @State private var prompt = "Sen uzman bir yapay zeka ajanısın."
     @State private var formError = ""
 
     private let palette = ["#38BDF8", "#A855F7", "#10B981", "#F59E0B", "#EC4899", "#6366F1", "#14B8A6", "#EF4444"]
 
+    private var selectableProviders: [APIProviderConfig] {
+        let active = engine.providers.filter { $0.kind != .antigravityCLI && $0.isEnabled }
+        return active.isEmpty ? engine.providers.filter { $0.kind != .antigravityCLI } : active
+    }
+
     private var currentProvider: APIProviderConfig? {
-        engine.provider(for: providerId) ?? engine.providers.first
+        engine.provider(for: providerId) ?? selectableProviders.first ?? engine.providers.first
+    }
+
+    private func applySmartRecommendation() {
+        let decision = engine.recommendedHireRoute(
+            name: name.isEmpty ? "YeniAjan" : name,
+            title: title.isEmpty ? "Uzman Mühendis" : title,
+            prompt: prompt,
+            requestedModel: "auto"
+        )
+        providerId = decision.provider.id
+        modelId = decision.modelId
+        routeHintText = decision.reason
     }
 
     private func resolveModelSelection(preferredKeyword: String, provider: APIProviderConfig) -> String {
@@ -340,14 +355,8 @@ struct AddAgentSheet: View {
                                             hex = t.accentHex
                                             prompt = t.prompt
                                             formError = ""
-                                            let route = engine.recommendedHireRoute(
-                                                name: t.name,
-                                                title: t.title,
-                                                prompt: t.prompt,
-                                                requestedModel: "auto"
-                                            )
-                                            providerId = route.provider.id
-                                            modelId = route.modelId
+                                            useAutoModel = true
+                                            applySmartRecommendation()
                                         } label: {
                                             HStack(spacing: 4) {
                                                 Text(t.emoji)
@@ -388,12 +397,15 @@ struct AddAgentSheet: View {
                         }
 
                         HStack(spacing: 10) {
-                            let validProviderId = engine.providers.contains(where: { $0.id == providerId })
+                            let availableProvs = selectableProviders
+                            let validProviderId = availableProvs.contains(where: { $0.id == providerId })
                                 ? providerId
-                                : (engine.providers.first?.id ?? providerId)
+                                : (availableProvs.first?.id ?? providerId)
                             Picker("API Sağlayıcı", selection: Binding(
                                 get: { validProviderId },
                                 set: { newId in
+                                    useAutoModel = false
+                                    routeHintText = ""
                                     providerId = newId
                                     if let p = engine.provider(for: newId) {
                                         let kw = deriveModelKeyword(from: modelId)
@@ -402,7 +414,7 @@ struct AddAgentSheet: View {
                                     }
                                 }
                             )) {
-                                ForEach(engine.providers) { p in
+                                ForEach(availableProvs) { p in
                                     Text("\(p.name)\(p.isConfigured ? " (Aktif)" : "")").tag(p.id)
                                 }
                             }
@@ -422,6 +434,20 @@ struct AddAgentSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Model ID").font(.caption.weight(.medium))
+                                Button {
+                                    useAutoModel = true
+                                    applySmartRecommendation()
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "sparkles").font(.system(size: 9))
+                                        Text(useAutoModel ? "Akıllı Seçim Açık" : "Rol+Çeşitlilik Öner")
+                                            .font(.system(size: 10, weight: .semibold))
+                                    }
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .liquidGlassCapsule(tint: useAutoModel ? .mint : .blue, interactive: true)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Ekip dağılımı, sağlayıcı sağlığı ve role göre en uygun farklı modeli otomatik seç")
                                 Spacer()
                                 Text("Yaratıcılık: \(String(format: "%.2f", temperature))")
                                     .font(.system(size: 10, design: .monospaced))
@@ -437,12 +463,24 @@ struct AddAgentSheet: View {
                                     Menu {
                                         if !freeModels.isEmpty {
                                             Section("🎁 Ücretsiz Modeller") {
-                                                ForEach(freeModels, id: \.self) { m in Button("🎁 " + m) { modelId = m } }
+                                                ForEach(freeModels, id: \.self) { m in
+                                                    Button("🎁 " + m) {
+                                                        useAutoModel = false
+                                                        routeHintText = ""
+                                                        modelId = m
+                                                    }
+                                                }
                                             }
                                         }
                                         if !regularModels.isEmpty {
                                             Section("Standart & Diğer Modeller") {
-                                                ForEach(regularModels, id: \.self) { m in Button(m) { modelId = m } }
+                                                ForEach(regularModels, id: \.self) { m in
+                                                    Button(m) {
+                                                        useAutoModel = false
+                                                        routeHintText = ""
+                                                        modelId = m
+                                                    }
+                                                }
                                             }
                                         }
                                     } label: {
@@ -454,17 +492,59 @@ struct AddAgentSheet: View {
                                 }
                             }
 
-                            TextField("Model ID (listeden seçin veya yazın)", text: $modelId)
+                            TextField("Model ID (otomatik atanır, seçin veya yazın)", text: $modelId)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.system(.body, design: .monospaced))
+
+                            if !routeHintText.isEmpty {
+                                Text("🤖 \(routeHintText)")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(.mint)
+                                    .lineLimit(1)
+                            }
+
+                            let crossSuggestions = engine.suggestedModelCandidates(name: name, title: title, prompt: prompt, limit: 6)
+                            if !crossSuggestions.isEmpty {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("Tüm Sağlayıcılardan Önerilen Çeşitli Modeller:")
+                                        .font(.system(size: 9.5, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: 5) {
+                                            ForEach(crossSuggestions) { sug in
+                                                let isSel = (providerId == sug.provider.id && modelId == sug.modelId)
+                                                Button {
+                                                    useAutoModel = false
+                                                    routeHintText = sug.note
+                                                    providerId = sug.provider.id
+                                                    modelId = sug.modelId
+                                                } label: {
+                                                    HStack(spacing: 4) {
+                                                        Text(sug.provider.name.components(separatedBy: " ").first ?? sug.provider.name)
+                                                            .font(.system(size: 8.5, weight: .bold))
+                                                            .foregroundStyle(Color(hex: sug.provider.kind.accentHex))
+                                                        Text(sug.modelId.components(separatedBy: "/").last ?? sug.modelId)
+                                                            .font(.system(size: 10, weight: isSel ? .bold : .regular, design: .monospaced))
+                                                    }
+                                                    .padding(.horizontal, 8).padding(.vertical, 4)
+                                                    .liquidGlassCapsule(tint: isSel ? .mint : Color(hex: sug.provider.kind.accentHex).opacity(0.65), interactive: true)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             if let prov = currentProvider, !prov.uniqueModels.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 5) {
-                                        ForEach(prov.uniqueModels.prefix(7), id: \.self) { m in
+                                        ForEach(prov.uniqueModels.prefix(16), id: \.self) { m in
                                             let isSelected = modelId == m
                                             let isFree = m.contains(":free") || m.contains("/free")
                                             Button {
+                                                useAutoModel = false
+                                                routeHintText = ""
                                                 modelId = m
                                             } label: {
                                                 HStack(spacing: 3) {
@@ -521,16 +601,13 @@ struct AddAgentSheet: View {
             }
             .padding(22)
         }
-        .frame(minWidth: 560, minHeight: 580, idealHeight: 640)
+        .frame(minWidth: 560, minHeight: 590, idealHeight: 670)
+        .onChange(of: title) { _, _ in
+            if useAutoModel { applySmartRecommendation() }
+        }
         .onAppear {
             avatarAsset = OfficeAvatarPreset.defaultAsset(forIndex: engine.agents.count)
-            if let primary = engine.providers.first(where: { $0.kind == .evren && $0.isConfigured })
-                ?? engine.providers.first(where: { $0.kind != .antigravityCLI && $0.isConfigured })
-                ?? engine.providers.first(where: { $0.kind != .antigravityCLI })
-                ?? engine.providers.first {
-                providerId = primary.id
-                modelId = primary.defaultModel.isEmpty ? (primary.models.first ?? "deepseek-v4.1-flash") : primary.defaultModel
-            }
+            applySmartRecommendation()
         }
     }
 }
